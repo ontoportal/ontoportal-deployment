@@ -11,8 +11,8 @@ images:
     repository: agroportal/ontologies_api
     tag: master
   cron:
-    repository: agroportal/ncbo_cron
-    tag: development
+    repository: agroportal/ontologies_api
+    tag: master
   ui:
     repository: ghcr.io/matportal/bioportal_web_ui
     tag: master

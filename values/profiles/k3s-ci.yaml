@@ -7,6 +7,19 @@ global:
   storageClassName: local-path
   ingressClassName: traefik
 
+api:
+  publicUrl: http://ontoportal-api:9393
+  restUrlPrefix: http://ontoportal-api:9393
+
+ui:
+  uiUrl: http://127.0.0.1:13000
+  publicApiUrl: http://127.0.0.1:19393
+  extraStartupScript: |-
+    UI_CONFIG="config/bioportal_config_${RAILS_ENV:-production}.rb"
+    cp config/bioportal_config_env.rb.sample "${UI_CONFIG}"
+    printf '\n$REST_URL = ENV.fetch(%%q[API_URL])\n' >> "${UI_CONFIG}"
+    printf '$PUBLIC_REST_URL = ENV[%%q[PUBLIC_API_URL]].to_s.empty? ? $REST_URL : ENV[%%q[PUBLIC_API_URL]]\n' >> "${UI_CONFIG}"
+
 persistence:
   shared:
     size: 5Gi

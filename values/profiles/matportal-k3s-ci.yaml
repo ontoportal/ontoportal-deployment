@@ -6,13 +6,16 @@
 # images so GitHub-hosted CI can validate the chart wiring without credentials.
 # It does not prove MatPortal's private UI image or FAIRness business logic.
 
+global:
+  namespace: matportal
+
 images:
   api:
     repository: agroportal/ontologies_api
     tag: master
   cron:
-    repository: bioportal/ncbo_cron
-    tag: v6.7.1
+    repository: agroportal/ontologies_api
+    tag: master
   ui:
     repository: agroportal/ontoportal_web_ui
     tag: development
@@ -24,8 +27,8 @@ images:
     tag: "1.27-alpine"
 
 api:
-  publicUrl: http://ontoportal-api:9393
-  restUrlPrefix: http://ontoportal-api:9393
+  publicUrl: http://matportal-api:9393
+  restUrlPrefix: http://matportal-api:9393
 
 ui:
   uiTheme: ontoportal

@@ -164,6 +164,10 @@ spec:
 {{ . | nindent 14 }}
               {{- end }}
               bundle check || bundle install
+              CLIENT_GEM_PATH="$(bundle show ontologies_api_client 2>/dev/null || true)"
+              if [ -n "$CLIENT_GEM_PATH" ] && [ -f "$CLIENT_GEM_PATH/lib/ontologies_api_client/models/class.rb" ]; then
+                sed -i 's/hasChildren,childre,/hasChildren,children,/g' "$CLIENT_GEM_PATH/lib/ontologies_api_client/models/class.rb" || true
+              fi
               {{- if .Values.ui.runDbPrepare }}
               for i in $(seq 1 30); do
                 if bundle exec rails db:prepare; then

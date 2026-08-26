@@ -115,7 +115,13 @@ spec:
           args:
             - |
               set -euo pipefail
-              cd {{ .Values.cron.appDir | quote }}
+              if [ -d {{ .Values.cron.appDir | quote }} ]; then
+                cd {{ .Values.cron.appDir | quote }}
+              elif [ -d /srv/ontoportal/ontologies_api ]; then
+                cd /srv/ontoportal/ontologies_api
+              elif [ -d /srv/ontoportal/ncbo_cron ]; then
+                cd /srv/ontoportal/ncbo_cron
+              fi
               git config --global --add safe.directory '*' || true
               mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids /data/bundle/cron /srv/ontoportal/data
               rm -rf log logs tmp /usr/local/hist || true
@@ -126,15 +132,21 @@ spec:
               ln -snf /data/repository /srv/ontoportal/data/repository
               ln -snf /data/reports /srv/ontoportal/data/reports
               ln -snf /data/mgrep /srv/ontoportal/data/mgrep
-              ANNO_DIR=$(bundle show ncbo_annotator 2>/dev/null || true)
-              if [ -n "${ANNO_DIR}" ] && [ -d "${ANNO_DIR}/lib/Lemmatizer" ]; then
-                ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true
-              fi
               {{- include "ontoportal.runtimeConfigScript" . | nindent 14 }}
+              cp "config/environments/${RACK_ENV:-production}.rb" config/config.rb 2>/dev/null || true
               {{- with .Values.cron.extraStartupScript }}
 {{ . | nindent 14 }}
               {{- end }}
               bundle check || bundle install
+              NCBO_CRON_DIR=$(bundle show ncbo_cron 2>/dev/null || true)
+              if [ -n "${NCBO_CRON_DIR}" ]; then
+                mkdir -p "${NCBO_CRON_DIR}/config"
+                cp "config/environments/${RACK_ENV:-production}.rb" "${NCBO_CRON_DIR}/config/config.rb"
+              fi
+              ANNO_DIR=$(bundle show ncbo_annotator 2>/dev/null || true)
+              if [ -n "${ANNO_DIR}" ] && [ -d "${ANNO_DIR}/lib/Lemmatizer" ]; then
+                ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true
+              fi
               bundle exec ruby <<'RUBY' || echo "WARN: could not patch Virtuoso Goo handling" >&2
               def patch_gem(gem_name, relative_path, replacements)
                 path = File.join(Gem::Specification.find_by_name(gem_name).full_gem_path, relative_path)
@@ -150,6 +162,9 @@ spec:
               patch_gem("ontologies_linked_data", "lib/ontologies_linked_data/services/submission_process/operations/submission_rdf_generator.rb", {
                 " if e.response&.body" => " if e.respond_to?(:response) && e.response&.body"
               })
+              patch_gem("ncbo_cron", "bin/ncbo_cron", {
+                "require 'sys/proctable'" => "begin; require 'sys/proctable'; rescue LoadError; end"
+              })
               patch_gem("goo", "lib/goo/sparql/client.rb", {
                 "DROP GRAPH <" => "DROP SILENT GRAPH <",
                 "chunk_lines = 500_000 # number of line" => "chunk_lines = Integer(ENV.fetch(\"GOO_APPEND_CHUNK_LINES\", \"2000\")) # patched for Virtuoso update payload size"
@@ -163,7 +178,7 @@ spec:
                   return super unless Goo.sparql_backend_name.to_s == "virtuoso"
 
                   graph_iri = graph.is_a?(Array) ? graph.first.to_s : graph.to_s
-                  Goo.sparql_update_client.update("INSERT DATA { GRAPH <#{graph_iri}> {\n#{data_file}\n} }")
+                  Goo.sparql_update_client.update("INSERT DATA { GRAPH <#{graph_iri}> {\n#{data_file}\n} }", graph: graph)
                 end
               end
               Goo::SPARQL::Client.prepend(GooVirtuosoAppendPatch) unless Goo::SPARQL::Client.ancestors.include?(GooVirtuosoAppendPatch)
@@ -171,8 +186,12 @@ spec:
               RUBY
               {{- if .Values.secrets.admin.enabled }}
               if [ ! -f /data/cron/.admin_seeded ]; then
-                if bundle exec rake "user:create[${ADMIN_USERNAME},${ADMIN_EMAIL},${ADMIN_PASSWORD}]"; then
-                  bundle exec rake "user:adminify[${ADMIN_USERNAME}]" || true
+                RAKE_OPTS=""
+                if [ -n "${NCBO_CRON_DIR}" ] && [ -d "${NCBO_CRON_DIR}/rakelib" ]; then
+                  RAKE_OPTS="--rakelibdir ${NCBO_CRON_DIR}/rakelib"
+                fi
+                if bundle exec rake ${RAKE_OPTS} "user:create[${ADMIN_USERNAME},${ADMIN_EMAIL},${ADMIN_PASSWORD}]"; then
+                  bundle exec rake ${RAKE_OPTS} "user:adminify[${ADMIN_USERNAME}]" || true
                   touch /data/cron/.admin_seeded
                 else
                   echo "WARN: admin user seed failed or already exists" >&2
@@ -181,9 +200,17 @@ spec:
               {{- end }}
               {{- if .Values.cron.starterOntology.enabled }}
               if [ ! -f /data/cron/.starter_ontology_imported ]; then
-                if bundle exec bin/ncbo_ontology_import --from-apikey "${SOURCE_OP_APIKEY:-${OP_APIKEY:-}}" -o "${STARTER_ONTOLOGY}" --from "${OP_API_URL}" --admin-user "${ADMIN_USERNAME}" \
-                  && bundle exec bin/ncbo_ontology_pull -o "${STARTER_ONTOLOGY}" \
-                  && bundle exec bin/ncbo_ontology_process -o "${STARTER_ONTOLOGY}"; then
+                NCBO_IMPORT="ncbo_ontology_import"
+                NCBO_PULL="ncbo_ontology_pull"
+                NCBO_PROCESS="ncbo_ontology_process"
+                if [ -f bin/ncbo_ontology_import ]; then
+                  NCBO_IMPORT="bin/ncbo_ontology_import"
+                  NCBO_PULL="bin/ncbo_ontology_pull"
+                  NCBO_PROCESS="bin/ncbo_ontology_process"
+                fi
+                if bundle exec ${NCBO_IMPORT} --from-apikey "${SOURCE_OP_APIKEY:-${OP_APIKEY:-}}" -o "${STARTER_ONTOLOGY}" --from "${OP_API_URL}" --admin-user "${ADMIN_USERNAME}" \
+                  && bundle exec ${NCBO_PULL} -o "${STARTER_ONTOLOGY}" \
+                  && bundle exec ${NCBO_PROCESS} -o "${STARTER_ONTOLOGY}"; then
                   touch /data/cron/.starter_ontology_imported
                 else
                   echo "WARN: starter ontology import failed" >&2
@@ -193,7 +220,12 @@ spec:
                 fi
               fi
               {{- end }}
-              exec {{ .Values.cron.startCommand }}
+              CRON_CMD={{ .Values.cron.startCommand | quote }}
+              if [ "${CRON_CMD}" = "bundle exec bin/ncbo_cron" ] && [ ! -f bin/ncbo_cron ]; then
+                exec bundle exec ncbo_cron
+              else
+                exec {{ .Values.cron.startCommand }}
+              fi
           {{- with .Values.cron.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

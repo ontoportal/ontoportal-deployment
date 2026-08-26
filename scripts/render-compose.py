@@ -77,6 +77,9 @@ end
 patch_gem("ontologies_linked_data", "lib/ontologies_linked_data/services/submission_process/operations/submission_rdf_generator.rb", {
   " if e.response&.body" => " if e.respond_to?(:response) && e.response&.body"
 })
+patch_gem("ncbo_cron", "bin/ncbo_cron", {
+  "require 'sys/proctable'" => "begin; require 'sys/proctable'; rescue LoadError; end"
+})
 patch_gem("goo", "lib/goo/sparql/client.rb", {
   "DROP GRAPH <" => "DROP SILENT GRAPH <",
   "chunk_lines = 500_000 # number of line" => "chunk_lines = Integer(ENV.fetch(\"GOO_APPEND_CHUNK_LINES\", \"2000\")) # patched for Virtuoso update payload size"
@@ -90,7 +93,7 @@ module GooVirtuosoAppendPatch
     return super unless Goo.sparql_backend_name.to_s == "virtuoso"
 
     graph_iri = graph.is_a?(Array) ? graph.first.to_s : graph.to_s
-    Goo.sparql_update_client.update("INSERT DATA { GRAPH <#{graph_iri}> {\n#{data_file}\n} }")
+    Goo.sparql_update_client.update("INSERT DATA { GRAPH <#{graph_iri}> {\n#{data_file}\n} }", graph: graph)
   end
 end
 Goo::SPARQL::Client.prepend(GooVirtuosoAppendPatch) unless Goo::SPARQL::Client.ancestors.include?(GooVirtuosoAppendPatch)
@@ -101,6 +104,38 @@ RUBY'''
 def runtime_config_command() -> str:
     return r'''mkdir -p config/environments
 cat > config/environments/compose.rb <<RUBY
+require "active_support/all"
+require "active_support/isolated_execution_state"
+require "sparql/client"
+
+module SparqlClientUpdatePatch
+  def update(query, **options)
+    @op = :update
+
+    if @cache.redis_cache
+      q_opts = query.respond_to?(:options) ? (query.options || {}) : options
+      bypass = q_opts[:bypass_cache]
+      graph = q_opts[:graph] || q_opts[:graphs]
+      if !bypass && graph
+        @cache.invalidate(graph)
+      end
+    end
+
+    @alt_endpoint = options[:endpoint]
+    @logger.log(query, user: options[:user], cached: false) do
+      case @url
+      when RDF::Queryable
+        require "sparql" unless defined?(::SPARQL::Grammar)
+        SPARQL.execute(query, @url, update: true, optimize: true, **options)
+      else
+        response(query, **options)
+      end
+    end
+    self
+  end
+end
+SPARQL::Client.prepend(SparqlClientUpdatePatch) unless SPARQL::Client.ancestors.include?(SparqlClientUpdatePatch)
+
 GOO_BACKEND_NAME = ENV.fetch("GOO_BACKEND_NAME", "virtuoso")
 GOO_HOST = ENV.fetch("GOO_HOST", "localhost")
 GOO_PATH_DATA = ENV.fetch("GOO_PATH_DATA", "/sparql/")
@@ -122,29 +157,70 @@ SOLR_TERM_SEARCH_URL = ENV.fetch("SOLR_TERM_SEARCH_URL", "http://localhost:8983/
 
 require "net/http"
 require "json"
+require "uri"
 
 module SOLR
   module Administration
     def solr_alive?
-      uri = URI.parse("#{@solr_url}/#{@collection_name}/admin/ping")
+      uri = URI("#{@solr_url}/admin/info/system?wt=json")
       res = Net::HTTP.get_response(uri)
-      return true if res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body)["status"] == "OK" rescue false)
-
-      uri = URI.parse("#{@solr_url}/admin/info/system")
-      res = Net::HTTP.get_response(uri)
-      res.is_a?(Net::HTTPSuccess)
+      res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body).dig("responseHeader", "status") == 0 rescue false)
     rescue StandardError
       false
     end
 
-    def collection_exists?(collection_name = @collection_name)
-      uri = URI.parse("#{@solr_url}/#{collection_name}/admin/ping")
+    def fetch_all_collections
+      uri = URI("#{@solr_url}/admin/cores?action=STATUS&wt=json")
       res = Net::HTTP.get_response(uri)
-      return true if res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body)["status"] == "OK" rescue false)
+      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
+      if res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
+        (data["status"] || {}).keys
+      else
+        raise "Failed to fetch Solr collections: #{res&.code} #{res&.body}"
+      end
+    end
 
-      solr_alive?
-    rescue StandardError
-      false
+    def collection_exists?(collection_name = @collection_name)
+      fetch_all_collections.include?(collection_name.to_s)
+    end
+
+    def create_collection(collection_name = @collection_name, _num_shards = 1, _replication_factor = 1)
+      return if collection_exists?(collection_name)
+
+      params = URI.encode_www_form(
+        action: "CREATE",
+        name: collection_name.to_s,
+        instanceDir: collection_name.to_s,
+        configSet: "_default",
+        wt: "json"
+      )
+      uri = URI("#{@solr_url}/admin/cores?#{params}")
+      req = Net::HTTP::Post.new(uri)
+      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(req) }
+      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
+      unless res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
+        raise "Failed to create Solr collection #{collection_name}: #{res&.code} #{res&.body}"
+      end
+    end
+
+    def delete_collection(collection_name = @collection_name)
+      return unless collection_exists?(collection_name)
+
+      params = URI.encode_www_form(
+        action: "UNLOAD",
+        core: collection_name.to_s,
+        deleteIndex: "true",
+        deleteDataDir: "true",
+        deleteInstanceDir: "true",
+        wt: "json"
+      )
+      uri = URI("#{@solr_url}/admin/cores?#{params}")
+      req = Net::HTTP::Post.new(uri)
+      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(req) }
+      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
+      unless res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
+        raise "Failed to delete Solr collection #{collection_name}: #{res&.code} #{res&.body}"
+      end
     end
   end
 end
@@ -322,31 +398,81 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             services["redis"]["volumes"] = [f"{data_dir}/redis:/data"]
 
     if service_enabled(values, "solr"):
+        configsets_dir = f"{data_dir}/solr/configsets"
+        services["solr-configsets"] = {
+            "image": image(values, "cron"),
+            "restart": "no",
+            "volumes": [f"{configsets_dir}:/opt/solr-configsets"],
+            "command": bash_command([
+                "set -euo pipefail",
+                "if [ -d /srv/ontoportal/ontologies_api ]; then cd /srv/ontoportal/ontologies_api; elif [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron; fi",
+                'gem_dir=$$(ruby -e \'require "bundler/setup"; %w[ontologies_linked_data ncbo_annotator ncbo_ontology_recommender].each { |g| p = Gem::Specification.find_by_name(g).full_gem_path rescue nil; if p && Dir.exist?("#{p}/config/solr"); print p; break; end }\' 2>/dev/null || true)',
+                'default_conf=$$(ruby -e \'require "bundler/setup"; %w[ontologies_linked_data ncbo_annotator ncbo_cron ontologies_api].each { |g| p = Gem::Specification.find_by_name(g).full_gem_path rescue nil; if p && Dir.exist?("#{p}/test/solr/configsets/_default/conf"); print "#{p}/test/solr/configsets/_default/conf"; break; end }\' 2>/dev/null || true)',
+                'if [ -z "$$gem_dir" ] || [ -z "$$default_conf" ]; then echo "ERROR: Solr configsets not found" >&2; exit 1; fi',
+                'src="$$gem_dir/config/solr"',
+                "mkdir -p /opt/solr-configsets",
+                "rm -rf /opt/solr-configsets/term_search /opt/solr-configsets/property_search /opt/solr-configsets/_default",
+                "mkdir -p /opt/solr-configsets/term_search/conf /opt/solr-configsets/property_search/conf /opt/solr-configsets/_default/conf",
+                'cp -a "$$default_conf/." /opt/solr-configsets/_default/conf/',
+                'cp -a "$$default_conf/." /opt/solr-configsets/term_search/conf/',
+                'cp -a "$$default_conf/." /opt/solr-configsets/property_search/conf/',
+                'cp -a "$$src/term_search/." /opt/solr-configsets/term_search/conf/',
+                'cp -a "$$src/property_search/." /opt/solr-configsets/property_search/conf/',
+                'for schema_file in /opt/solr-configsets/term_search/conf/schema.xml /opt/solr-configsets/property_search/conf/schema.xml; do '
+                'if [ -f "$$schema_file" ] && ! grep -q \'name="resource_model"\' "$$schema_file"; then '
+                'sed -i \'/name="resource_id"/a \\    <field name="resource_model" type="string" indexed="true" stored="true" multiValued="false" />\' "$$schema_file"; '
+                "fi; done",
+            ]),
+        }
         solr_common = {
             "image": image(values, "solr"),
             "restart": "unless-stopped",
             "environment": {"SOLR_HEAP": "${SOLR_HEAP:-1g}"},
+            "depends_on": {"solr-configsets": {"condition": "service_completed_successfully"}},
             "healthcheck": solr_healthcheck(),
         }
         if values["solr"].get("mode") == "split":
-            services["solr-term"] = copy.deepcopy(solr_common)
-            services["solr-term"]["ports"] = ["127.0.0.1:${SOLR_TERM_PORT:-8983}:8983"]
-            services["solr-term"]["volumes"] = [f"{data_dir}/solr/term:/var/solr"]
-            services["solr-term"]["command"] = ["solr-precreate", str(values["solr"].get("termCore", "term_search_core1"))]
-            services["solr-prop"] = copy.deepcopy(solr_common)
-            services["solr-prop"]["ports"] = ["127.0.0.1:${SOLR_PROP_PORT:-8984}:8983"]
-            services["solr-prop"]["volumes"] = [f"{data_dir}/solr/prop:/var/solr"]
-            services["solr-prop"]["command"] = ["solr-precreate", str(values["solr"].get("propCore", "prop_search_core1"))]
-        else:
-            services["solr"] = copy.deepcopy(solr_common)
-            services["solr"]["ports"] = ["127.0.0.1:${SOLR_PORT:-8983}:8983"]
-            services["solr"]["volumes"] = [f"{data_dir}/solr:/var/solr"]
             term_core = str(values["solr"].get("termCore", "term_search_core1"))
             prop_core = str(values["solr"].get("propCore", "prop_search_core1"))
+            services["solr-term"] = copy.deepcopy(solr_common)
+            services["solr-term"]["ports"] = ["127.0.0.1:${SOLR_TERM_PORT:-8983}:8983"]
+            services["solr-term"]["volumes"] = [
+                f"{data_dir}/solr/term:/var/solr",
+                f"{configsets_dir}:/opt/solr-configsets:ro",
+            ]
+            services["solr-term"]["command"] = bash_command([
+                "set -euo pipefail",
+                "mkdir -p /var/solr/data/configsets",
+                "if [ -d /opt/solr-configsets/_default ]; then cp -r /opt/solr-configsets/_default /var/solr/data/configsets/_default; elif [ -d /opt/solr/server/solr/configsets/_default ]; then cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default; fi",
+                f"if [ -d /opt/solr-configsets/term_search ]; then exec solr-precreate {shlex.quote(term_core)} /opt/solr-configsets/term_search; else exec solr-precreate {shlex.quote(term_core)}; fi",
+            ])
+            services["solr-prop"] = copy.deepcopy(solr_common)
+            services["solr-prop"]["ports"] = ["127.0.0.1:${SOLR_PROP_PORT:-8984}:8983"]
+            services["solr-prop"]["volumes"] = [
+                f"{data_dir}/solr/prop:/var/solr",
+                f"{configsets_dir}:/opt/solr-configsets:ro",
+            ]
+            services["solr-prop"]["command"] = bash_command([
+                "set -euo pipefail",
+                "mkdir -p /var/solr/data/configsets",
+                "if [ -d /opt/solr-configsets/_default ]; then cp -r /opt/solr-configsets/_default /var/solr/data/configsets/_default; elif [ -d /opt/solr/server/solr/configsets/_default ]; then cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default; fi",
+                f"if [ -d /opt/solr-configsets/property_search ]; then exec solr-precreate {shlex.quote(prop_core)} /opt/solr-configsets/property_search; else exec solr-precreate {shlex.quote(prop_core)}; fi",
+            ])
+        else:
+            term_core = str(values["solr"].get("termCore", "term_search_core1"))
+            prop_core = str(values["solr"].get("propCore", "prop_search_core1"))
+            services["solr"] = copy.deepcopy(solr_common)
+            services["solr"]["ports"] = ["127.0.0.1:${SOLR_PORT:-8983}:8983"]
+            services["solr"]["volumes"] = [
+                f"{data_dir}/solr:/var/solr",
+                f"{configsets_dir}:/opt/solr-configsets:ro",
+            ]
             services["solr"]["command"] = bash_command([
+                "set -euo pipefail",
+                "mkdir -p /var/solr/data/configsets",
+                "if [ -d /opt/solr-configsets/_default ]; then cp -r /opt/solr-configsets/_default /var/solr/data/configsets/_default; elif [ -d /opt/solr/server/solr/configsets/_default ]; then cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default; fi",
                 "solr start -p 8983",
-                f"solr create_core -c {shlex.quote(term_core)} || true",
-                f"solr create_core -c {shlex.quote(prop_core)} || true",
+                f'for core_cfg in {shlex.quote(term_core)}:/opt/solr-configsets/term_search {shlex.quote(prop_core)}:/opt/solr-configsets/property_search; do core="$${{core_cfg%%:*}}"; cfg="$${{core_cfg#*:}}"; if [ -d "$$cfg" ]; then solr create_core -c "$$core" -d "$$cfg" || true; else solr create_core -c "$$core" || true; fi; done',
                 "solr stop -p 8983",
                 "exec solr start -f -p 8983",
             ])
@@ -362,13 +488,20 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
 
     if service_enabled(values, "mgrep"):
         command = values["mgrep"].get("command") or ""
+        if not command:
+            dict_path = values["mgrep"].get("dictionaryPath", "/data/mgrep/dictionary.txt")
+            command = (
+                f"mkdir -p $(dirname {dict_path}); "
+                f"[ -s {dict_path} ] || (cp /srv/mgrep/dictionary/dictionary.txt {dict_path} 2>/dev/null || printf '0\\tDUMMY\\n' > {dict_path}); "
+                f"mgrep --port {mgrep_port} -f {dict_path} -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt && tail -f /dev/null"
+            )
         cfg: Dict[str, Any] = {
             "image": image(values, "mgrep"),
             "restart": "unless-stopped",
             "ports": [f"127.0.0.1:${{MGREP_PORT:-{mgrep_port}}}:{mgrep_port}"],
+            "volumes": [f"{data_dir}:/data"],
+            "command": command,
         }
-        if command:
-            cfg["command"] = command
         services["mgrep"] = cfg
 
     if service_enabled(values, "mysql"):
@@ -476,6 +609,8 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             cron_env["SOURCE_OP_APIKEY"] = "${SOURCE_OP_APIKEY:-}"
         cron_env.update(env_map(values, "cron"))
         cron_steps = [
+            f"if [ -d {shlex.quote(cron_dir)} ]; then cd {shlex.quote(cron_dir)}; elif [ -d /srv/ontoportal/ontologies_api ]; then cd /srv/ontoportal/ontologies_api; elif [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron; fi",
+            "git config --global --add safe.directory '*' || true",
             "mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids /data/bundle/cron /srv/ontoportal/data",
             "rm -rf log logs tmp /usr/local/hist || true",
             "ln -snf /data/cron/logs log",
@@ -486,36 +621,63 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             "ln -snf /data/reports /srv/ontoportal/data/reports",
             "ln -snf /data/mgrep /srv/ontoportal/data/mgrep",
             runtime_config_command(),
+            "cp config/environments/compose.rb config/config.rb 2>/dev/null || true",
             "gem install bundler -v 2.3.27 >/dev/null 2>&1 || true",
             "bundle _2.3.27_ check || bundle _2.3.27_ install",
+            (
+                'NCBO_CRON_DIR="$$(bundle _2.3.27_ show ncbo_cron 2>/dev/null || true)"; '
+                'if [ -n "$$NCBO_CRON_DIR" ]; then '
+                'mkdir -p "$$NCBO_CRON_DIR/config"; '
+                'cp config/environments/compose.rb "$$NCBO_CRON_DIR/config/config.rb"; '
+                'fi'
+            ),
+            (
+                'ANNO_DIR="$$(bundle _2.3.27_ show ncbo_annotator 2>/dev/null || true)"; '
+                'if [ -n "$$ANNO_DIR" ] && [ -d "$$ANNO_DIR/lib/Lemmatizer" ]; then '
+                'ln -snf "$$ANNO_DIR/lib/Lemmatizer" lib/Lemmatizer || true; '
+                'fi'
+            ),
             virtuoso_patch_command(),
         ]
         if values["secrets"].get("admin", {}).get("enabled", False):
             cron_steps.append(
                 "if [ ! -f /data/cron/.admin_seeded ]; then "
-                "if bundle _2.3.27_ exec rake \"user:create[$${ADMIN_USERNAME},$${ADMIN_EMAIL},$${ADMIN_PASSWORD}]\"; then "
-                "bundle _2.3.27_ exec rake \"user:adminify[$${ADMIN_USERNAME}]\" || true; "
+                'RAKE_OPTS=""; '
+                'if [ -n "$$NCBO_CRON_DIR" ] && [ -d "$$NCBO_CRON_DIR/rakelib" ]; then '
+                'RAKE_OPTS="--rakelibdir $$NCBO_CRON_DIR/rakelib"; '
+                "fi; "
+                'if bundle _2.3.27_ exec rake $$RAKE_OPTS "user:create[$$ADMIN_USERNAME,$$ADMIN_EMAIL,$$ADMIN_PASSWORD]"; then '
+                'bundle _2.3.27_ exec rake $$RAKE_OPTS "user:adminify[$$ADMIN_USERNAME]" || true; '
                 "touch /data/cron/.admin_seeded; "
-                "else echo \"WARN: admin user seed failed or already exists\" >&2; fi; fi"
+                'else echo "WARN: admin user seed failed or already exists" >&2; fi; fi'
             )
         if values["cron"].get("starterOntology", {}).get("enabled", False):
             starter_fail = "exit 1" if values["cron"].get("starterOntology", {}).get("required", False) else "true"
             cron_steps.append(
                 "if [ ! -f /data/cron/.starter_ontology_imported ]; then "
-                "if bundle _2.3.27_ exec bin/ncbo_ontology_import --from-apikey \"$${SOURCE_OP_APIKEY:-$${OP_APIKEY:-}}\" -o \"$${STARTER_ONTOLOGY}\" --from \"$${OP_API_URL}\" --admin-user \"$${ADMIN_USERNAME}\" "
-                "&& bundle _2.3.27_ exec bin/ncbo_ontology_pull -o \"$${STARTER_ONTOLOGY}\" "
-                "&& bundle _2.3.27_ exec bin/ncbo_ontology_process -o \"$${STARTER_ONTOLOGY}\"; then "
+                'NCBO_IMPORT="ncbo_ontology_import"; NCBO_PULL="ncbo_ontology_pull"; NCBO_PROCESS="ncbo_ontology_process"; '
+                'if [ -f bin/ncbo_ontology_import ]; then NCBO_IMPORT="bin/ncbo_ontology_import"; NCBO_PULL="bin/ncbo_ontology_pull"; NCBO_PROCESS="bin/ncbo_ontology_process"; fi; '
+                'if bundle _2.3.27_ exec $$NCBO_IMPORT --from-apikey "$${SOURCE_OP_APIKEY:-$${OP_APIKEY:-}}" -o "$${STARTER_ONTOLOGY}" --from "$${OP_API_URL}" --admin-user "$${ADMIN_USERNAME}" '
+                '&& bundle _2.3.27_ exec $$NCBO_PULL -o "$${STARTER_ONTOLOGY}" '
+                '&& bundle _2.3.27_ exec $$NCBO_PROCESS -o "$${STARTER_ONTOLOGY}"; then '
                 "touch /data/cron/.starter_ontology_imported; "
                 f"else echo 'WARN: starter ontology import failed' >&2; {starter_fail}; fi; fi"
             )
-        cron_steps.append("exec " + bundle_command(values["cron"].get("startCommand", "bundle exec bin/ncbo_cron")))
+        cron_start = values["cron"].get("startCommand", "bundle exec bin/ncbo_cron")
+        if cron_start == "bundle exec bin/ncbo_cron":
+            cron_steps.append(
+                "if [ -f bin/ncbo_cron ]; then "
+                "exec bundle _2.3.27_ exec bin/ncbo_cron; "
+                "else exec bundle _2.3.27_ exec ncbo_cron; fi"
+            )
+        else:
+            cron_steps.append("exec " + bundle_command(cron_start))
         services["cron"] = {
             "image": image(values, "cron"),
             "restart": "unless-stopped",
             "depends_on": copy.deepcopy(depends_api),
             "environment": cron_env,
             "volumes": [f"{data_dir}:/data"],
-            "working_dir": cron_dir,
             "command": bash_command(cron_steps),
         }
 
@@ -576,6 +738,12 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             "ln -snf /data/ui/tmp tmp",
             "gem install bundler -v 2.3.27 >/dev/null 2>&1 || true",
             "bundle _2.3.27_ check || bundle _2.3.27_ install",
+            (
+                'CLIENT_GEM_PATH="$$(bundle _2.3.27_ show ontologies_api_client 2>/dev/null || true)"; '
+                'if [ -n "$$CLIENT_GEM_PATH" ] && [ -f "$$CLIENT_GEM_PATH/lib/ontologies_api_client/models/class.rb" ]; then '
+                "sed -i 's/hasChildren,childre,/hasChildren,children,/g' \"$$CLIENT_GEM_PATH/lib/ontologies_api_client/models/class.rb\" || true; "
+                "fi"
+            ),
         ]
         if values["ui"].get("runDbPrepare", False):
             ui_steps.append(

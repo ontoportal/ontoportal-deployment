@@ -49,11 +49,23 @@ spec:
           ports:
             - name: mgrep
               containerPort: {{ .Values.mgrep.containerPort }}
-          {{- if .Values.mgrep.command }}
-          command: ["/bin/sh", "-lc"]
-          args:
-            - {{ .Values.mgrep.command | quote }}
-          {{- end }}
+          command:
+            - /bin/sh
+            - -lc
+            - |
+              {{- if .Values.mgrep.command }}
+              {{ .Values.mgrep.command }}
+              {{- else }}
+              mkdir -p "$(dirname {{ .Values.mgrep.dictionaryPath | quote }})"
+              if [ ! -s {{ .Values.mgrep.dictionaryPath | quote }} ]; then
+                if [ -f /srv/mgrep/dictionary/dictionary.txt ]; then
+                  cp /srv/mgrep/dictionary/dictionary.txt {{ .Values.mgrep.dictionaryPath | quote }}
+                else
+                  printf '0\tDUMMY\n' > {{ .Values.mgrep.dictionaryPath | quote }}
+                fi
+              fi
+              /usr/local/bin/mgrep --port {{ .Values.mgrep.containerPort }} -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt -f {{ .Values.mgrep.dictionaryPath | quote }} && while true; do sleep 1000; done
+              {{- end }}
           {{- with .Values.mgrep.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

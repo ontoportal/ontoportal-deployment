@@ -9,11 +9,64 @@ services:
     - 'yes'
     volumes:
     - ${DATA_DIR:-./data}/redis:/data
+  solr-configsets:
+    image: agroportal/ontologies_api:master
+    restart: 'no'
+    volumes:
+    - ${DATA_DIR:-./data}/solr/configsets:/opt/solr-configsets
+    command:
+    - bash
+    - -lc
+    - 'set -euo pipefail
+
+      if [ -d /srv/ontoportal/ontologies_api ]; then cd /srv/ontoportal/ontologies_api;
+      elif [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron; fi
+
+      gem_dir=$$(ruby -e ''require "bundler/setup"; %w[ontologies_linked_data ncbo_annotator
+      ncbo_ontology_recommender].each { |g| p = Gem::Specification.find_by_name(g).full_gem_path
+      rescue nil; if p && Dir.exist?("#{p}/config/solr"); print p; break; end }''
+      2>/dev/null || true)
+
+      default_conf=$$(ruby -e ''require "bundler/setup"; %w[ontologies_linked_data
+      ncbo_annotator ncbo_cron ontologies_api].each { |g| p = Gem::Specification.find_by_name(g).full_gem_path
+      rescue nil; if p && Dir.exist?("#{p}/test/solr/configsets/_default/conf"); print
+      "#{p}/test/solr/configsets/_default/conf"; break; end }'' 2>/dev/null || true)
+
+      if [ -z "$$gem_dir" ] || [ -z "$$default_conf" ]; then echo "ERROR: Solr configsets
+      not found" >&2; exit 1; fi
+
+      src="$$gem_dir/config/solr"
+
+      mkdir -p /opt/solr-configsets
+
+      rm -rf /opt/solr-configsets/term_search /opt/solr-configsets/property_search
+      /opt/solr-configsets/_default
+
+      mkdir -p /opt/solr-configsets/term_search/conf /opt/solr-configsets/property_search/conf
+      /opt/solr-configsets/_default/conf
+
+      cp -a "$$default_conf/." /opt/solr-configsets/_default/conf/
+
+      cp -a "$$default_conf/." /opt/solr-configsets/term_search/conf/
+
+      cp -a "$$default_conf/." /opt/solr-configsets/property_search/conf/
+
+      cp -a "$$src/term_search/." /opt/solr-configsets/term_search/conf/
+
+      cp -a "$$src/property_search/." /opt/solr-configsets/property_search/conf/
+
+      for schema_file in /opt/solr-configsets/term_search/conf/schema.xml /opt/solr-configsets/property_search/conf/schema.xml;
+      do if [ -f "$$schema_file" ] && ! grep -q ''name="resource_model"'' "$$schema_file";
+      then sed -i ''/name="resource_id"/a \    <field name="resource_model" type="string"
+      indexed="true" stored="true" multiValued="false" />'' "$$schema_file"; fi; done'
   solr:
     image: solr:9.1
     restart: unless-stopped
     environment:
       SOLR_HEAP: ${SOLR_HEAP:-1g}
+    depends_on:
+      solr-configsets:
+        condition: service_completed_successfully
     healthcheck:
       test:
       - CMD-SHELL
@@ -25,14 +78,25 @@ services:
     - 127.0.0.1:${SOLR_PORT:-8983}:8983
     volumes:
     - ${DATA_DIR:-./data}/solr:/var/solr
+    - ${DATA_DIR:-./data}/solr/configsets:/opt/solr-configsets:ro
     command:
     - bash
     - -lc
-    - 'solr start -p 8983
+    - 'set -euo pipefail
 
-      solr create_core -c term_search_core1 || true
+      mkdir -p /var/solr/data/configsets
 
-      solr create_core -c prop_search_core1 || true
+      if [ -d /opt/solr-configsets/_default ]; then cp -r /opt/solr-configsets/_default
+      /var/solr/data/configsets/_default; elif [ -d /opt/solr/server/solr/configsets/_default
+      ]; then cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default;
+      fi
+
+      solr start -p 8983
+
+      for core_cfg in term_search_core1:/opt/solr-configsets/term_search prop_search_core1:/opt/solr-configsets/property_search;
+      do core="$${core_cfg%%:*}"; cfg="$${core_cfg#*:}"; if [ -d "$$cfg" ]; then solr
+      create_core -c "$$core" -d "$$cfg" || true; else solr create_core -c "$$core"
+      || true; fi; done
 
       solr stop -p 8983
 
@@ -51,6 +115,8 @@ services:
     restart: unless-stopped
     ports:
     - 127.0.0.1:${MGREP_PORT:-55555}:55555
+    volumes:
+    - ${DATA_DIR:-./data}:/data
     command: mkdir -p /data/mgrep; [ -s /data/mgrep/dictionary.txt ] || printf '0\tDUMMY\n'
       > /data/mgrep/dictionary.txt; mgrep --port 55555 -f /data/mgrep/dictionary.txt
       -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt && tail -f /dev/null
@@ -132,32 +198,67 @@ services:
       \ log\nln -snf /data/api/tmp tmp\nln -snf /data/repository /srv/ontoportal/data/repository\n\
       ln -snf /data/reports /srv/ontoportal/data/reports\nln -snf /data/mgrep /srv/ontoportal/data/mgrep\n\
       mkdir -p config/environments\ncat > config/environments/compose.rb <<RUBY\n\
-      GOO_BACKEND_NAME = ENV.fetch(\"GOO_BACKEND_NAME\", \"virtuoso\")\nGOO_HOST =\
-      \ ENV.fetch(\"GOO_HOST\", \"localhost\")\nGOO_PATH_DATA = ENV.fetch(\"GOO_PATH_DATA\"\
-      , \"/sparql/\")\nGOO_PATH_QUERY = ENV.fetch(\"GOO_PATH_QUERY\", \"/sparql/\"\
-      )\nGOO_PATH_UPDATE = ENV.fetch(\"GOO_PATH_UPDATE\", \"/sparql/\")\nGOO_PORT\
-      \ = ENV.fetch(\"GOO_PORT\", 8890)\nMGREP_HOST = ENV.fetch(\"MGREP_HOST\", \"\
-      localhost\")\nMGREP_PORT = ENV.fetch(\"MGREP_PORT\", 55556)\nMGREP_DICT_PATH\
-      \ = ENV.fetch(\"MGREP_DICT_PATH\", \"/data/mgrep/dictionary.txt\")\nREDIS_GOO_CACHE_HOST\
-      \ = ENV.fetch(\"REDIS_GOO_CACHE_HOST\", \"localhost\")\nREDIS_HTTP_CACHE_HOST\
-      \ = ENV.fetch(\"REDIS_HTTP_CACHE_HOST\", \"localhost\")\nREDIS_PERSISTENT_HOST\
-      \ = ENV.fetch(\"REDIS_PERSISTENT_HOST\", \"localhost\")\nREDIS_PORT = ENV.fetch(\"\
-      REDIS_PORT\", 6379)\nREPORT_PATH = ENV.fetch(\"REPORT_PATH\", \"/data/reports/ontologies_report.json\"\
-      )\nREPOSITORY_FOLDER = ENV.fetch(\"REPOSITORY_FOLDER\", \"/data/repository\"\
-      )\nREST_URL_PREFIX = ENV.fetch(\"REST_URL_PREFIX\", \"http://localhost:9393\"\
-      )\nSOLR_PROP_SEARCH_URL = ENV.fetch(\"SOLR_PROP_SEARCH_URL\", \"http://localhost:8983/solr/prop_search_core1\"\
+      require \"active_support/all\"\nrequire \"active_support/isolated_execution_state\"\
+      \nrequire \"sparql/client\"\n\nmodule SparqlClientUpdatePatch\n  def update(query,\
+      \ **options)\n    @op = :update\n\n    if @cache.redis_cache\n      q_opts =\
+      \ query.respond_to?(:options) ? (query.options || {}) : options\n      bypass\
+      \ = q_opts[:bypass_cache]\n      graph = q_opts[:graph] || q_opts[:graphs]\n\
+      \      if !bypass && graph\n        @cache.invalidate(graph)\n      end\n  \
+      \  end\n\n    @alt_endpoint = options[:endpoint]\n    @logger.log(query, user:\
+      \ options[:user], cached: false) do\n      case @url\n      when RDF::Queryable\n\
+      \        require \"sparql\" unless defined?(::SPARQL::Grammar)\n        SPARQL.execute(query,\
+      \ @url, update: true, optimize: true, **options)\n      else\n        response(query,\
+      \ **options)\n      end\n    end\n    self\n  end\nend\nSPARQL::Client.prepend(SparqlClientUpdatePatch)\
+      \ unless SPARQL::Client.ancestors.include?(SparqlClientUpdatePatch)\n\nGOO_BACKEND_NAME\
+      \ = ENV.fetch(\"GOO_BACKEND_NAME\", \"virtuoso\")\nGOO_HOST = ENV.fetch(\"GOO_HOST\"\
+      , \"localhost\")\nGOO_PATH_DATA = ENV.fetch(\"GOO_PATH_DATA\", \"/sparql/\"\
+      )\nGOO_PATH_QUERY = ENV.fetch(\"GOO_PATH_QUERY\", \"/sparql/\")\nGOO_PATH_UPDATE\
+      \ = ENV.fetch(\"GOO_PATH_UPDATE\", \"/sparql/\")\nGOO_PORT = ENV.fetch(\"GOO_PORT\"\
+      , 8890)\nMGREP_HOST = ENV.fetch(\"MGREP_HOST\", \"localhost\")\nMGREP_PORT =\
+      \ ENV.fetch(\"MGREP_PORT\", 55556)\nMGREP_DICT_PATH = ENV.fetch(\"MGREP_DICT_PATH\"\
+      , \"/data/mgrep/dictionary.txt\")\nREDIS_GOO_CACHE_HOST = ENV.fetch(\"REDIS_GOO_CACHE_HOST\"\
+      , \"localhost\")\nREDIS_HTTP_CACHE_HOST = ENV.fetch(\"REDIS_HTTP_CACHE_HOST\"\
+      , \"localhost\")\nREDIS_PERSISTENT_HOST = ENV.fetch(\"REDIS_PERSISTENT_HOST\"\
+      , \"localhost\")\nREDIS_PORT = ENV.fetch(\"REDIS_PORT\", 6379)\nREPORT_PATH\
+      \ = ENV.fetch(\"REPORT_PATH\", \"/data/reports/ontologies_report.json\")\nREPOSITORY_FOLDER\
+      \ = ENV.fetch(\"REPOSITORY_FOLDER\", \"/data/repository\")\nREST_URL_PREFIX\
+      \ = ENV.fetch(\"REST_URL_PREFIX\", \"http://localhost:9393\")\nSOLR_PROP_SEARCH_URL\
+      \ = ENV.fetch(\"SOLR_PROP_SEARCH_URL\", \"http://localhost:8983/solr/prop_search_core1\"\
       )\nSOLR_TERM_SEARCH_URL = ENV.fetch(\"SOLR_TERM_SEARCH_URL\", \"http://localhost:8983/solr/term_search_core1\"\
-      )\n\nrequire \"net/http\"\nrequire \"json\"\n\nmodule SOLR\n  module Administration\n\
-      \    def solr_alive?\n      uri = URI.parse(\"#{@solr_url}/#{@collection_name}/admin/ping\"\
-      )\n      res = Net::HTTP.get_response(uri)\n      return true if res.is_a?(Net::HTTPSuccess)\
-      \ && (JSON.parse(res.body)[\"status\"] == \"OK\" rescue false)\n\n      uri\
-      \ = URI.parse(\"#{@solr_url}/admin/info/system\")\n      res = Net::HTTP.get_response(uri)\n\
-      \      res.is_a?(Net::HTTPSuccess)\n    rescue StandardError\n      false\n\
-      \    end\n\n    def collection_exists?(collection_name = @collection_name)\n\
-      \      uri = URI.parse(\"#{@solr_url}/#{collection_name}/admin/ping\")\n   \
-      \   res = Net::HTTP.get_response(uri)\n      return true if res.is_a?(Net::HTTPSuccess)\
-      \ && (JSON.parse(res.body)[\"status\"] == \"OK\" rescue false)\n\n      solr_alive?\n\
-      \    rescue StandardError\n      false\n    end\n  end\nend\n\nif defined?(LinkedData)\n\
+      )\n\nrequire \"net/http\"\nrequire \"json\"\nrequire \"uri\"\n\nmodule SOLR\n\
+      \  module Administration\n    def solr_alive?\n      uri = URI(\"#{@solr_url}/admin/info/system?wt=json\"\
+      )\n      res = Net::HTTP.get_response(uri)\n      res.is_a?(Net::HTTPSuccess)\
+      \ && (JSON.parse(res.body).dig(\"responseHeader\", \"status\") == 0 rescue false)\n\
+      \    rescue StandardError\n      false\n    end\n\n    def fetch_all_collections\n\
+      \      uri = URI(\"#{@solr_url}/admin/cores?action=STATUS&wt=json\")\n     \
+      \ res = Net::HTTP.get_response(uri)\n      data = (JSON.parse(res.body) rescue\
+      \ {}) if res.is_a?(Net::HTTPSuccess)\n      if res.is_a?(Net::HTTPSuccess) &&\
+      \ data.dig(\"responseHeader\", \"status\") == 0\n        (data[\"status\"] ||\
+      \ {}).keys\n      else\n        raise \"Failed to fetch Solr collections: #{res&.code}\
+      \ #{res&.body}\"\n      end\n    end\n\n    def collection_exists?(collection_name\
+      \ = @collection_name)\n      fetch_all_collections.include?(collection_name.to_s)\n\
+      \    end\n\n    def create_collection(collection_name = @collection_name, _num_shards\
+      \ = 1, _replication_factor = 1)\n      return if collection_exists?(collection_name)\n\
+      \n      params = URI.encode_www_form(\n        action: \"CREATE\",\n       \
+      \ name: collection_name.to_s,\n        instanceDir: collection_name.to_s,\n\
+      \        configSet: \"_default\",\n        wt: \"json\"\n      )\n      uri\
+      \ = URI(\"#{@solr_url}/admin/cores?#{params}\")\n      req = Net::HTTP::Post.new(uri)\n\
+      \      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme ==\
+      \ \"https\") { |http| http.request(req) }\n      data = (JSON.parse(res.body)\
+      \ rescue {}) if res.is_a?(Net::HTTPSuccess)\n      unless res.is_a?(Net::HTTPSuccess)\
+      \ && data.dig(\"responseHeader\", \"status\") == 0\n        raise \"Failed to\
+      \ create Solr collection #{collection_name}: #{res&.code} #{res&.body}\"\n \
+      \     end\n    end\n\n    def delete_collection(collection_name = @collection_name)\n\
+      \      return unless collection_exists?(collection_name)\n\n      params = URI.encode_www_form(\n\
+      \        action: \"UNLOAD\",\n        core: collection_name.to_s,\n        deleteIndex:\
+      \ \"true\",\n        deleteDataDir: \"true\",\n        deleteInstanceDir: \"\
+      true\",\n        wt: \"json\"\n      )\n      uri = URI(\"#{@solr_url}/admin/cores?#{params}\"\
+      )\n      req = Net::HTTP::Post.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
+      \ uri.port, use_ssl: uri.scheme == \"https\") { |http| http.request(req) }\n\
+      \      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
+      \      unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
+      status\") == 0\n        raise \"Failed to delete Solr collection #{collection_name}:\
+      \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\nend\n\nif defined?(LinkedData)\n\
       \  LinkedData.config do |config|\n    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n\
       \    config.goo_host = GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n\
       \    config.goo_path_query = GOO_PATH_QUERY.to_s\n    config.goo_path_data =\
@@ -195,7 +296,7 @@ services:
       timeout: 5s
       retries: 20
   cron:
-    image: agroportal/ncbo_cron:development
+    image: agroportal/ontologies_api:master
     restart: unless-stopped
     depends_on:
       redis:
@@ -242,43 +343,81 @@ services:
       OP_API_URL: https://data.bioontology.org
     volumes:
     - ${DATA_DIR:-./data}:/data
-    working_dir: /srv/ontoportal/ncbo_cron
     command:
     - bash
     - -lc
-    - "mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs\
-      \ /data/cron/tmp/pids /data/bundle/cron /srv/ontoportal/data\nrm -rf log logs\
-      \ tmp /usr/local/hist || true\nln -snf /data/cron/logs log\nln -snf /data/cron/logs\
-      \ logs\nln -snf /data/cron/tmp tmp\nln -snf /data/history /usr/local/hist\n\
-      ln -snf /data/repository /srv/ontoportal/data/repository\nln -snf /data/reports\
-      \ /srv/ontoportal/data/reports\nln -snf /data/mgrep /srv/ontoportal/data/mgrep\n\
-      mkdir -p config/environments\ncat > config/environments/compose.rb <<RUBY\n\
-      GOO_BACKEND_NAME = ENV.fetch(\"GOO_BACKEND_NAME\", \"virtuoso\")\nGOO_HOST =\
-      \ ENV.fetch(\"GOO_HOST\", \"localhost\")\nGOO_PATH_DATA = ENV.fetch(\"GOO_PATH_DATA\"\
-      , \"/sparql/\")\nGOO_PATH_QUERY = ENV.fetch(\"GOO_PATH_QUERY\", \"/sparql/\"\
-      )\nGOO_PATH_UPDATE = ENV.fetch(\"GOO_PATH_UPDATE\", \"/sparql/\")\nGOO_PORT\
-      \ = ENV.fetch(\"GOO_PORT\", 8890)\nMGREP_HOST = ENV.fetch(\"MGREP_HOST\", \"\
-      localhost\")\nMGREP_PORT = ENV.fetch(\"MGREP_PORT\", 55556)\nMGREP_DICT_PATH\
-      \ = ENV.fetch(\"MGREP_DICT_PATH\", \"/data/mgrep/dictionary.txt\")\nREDIS_GOO_CACHE_HOST\
-      \ = ENV.fetch(\"REDIS_GOO_CACHE_HOST\", \"localhost\")\nREDIS_HTTP_CACHE_HOST\
-      \ = ENV.fetch(\"REDIS_HTTP_CACHE_HOST\", \"localhost\")\nREDIS_PERSISTENT_HOST\
-      \ = ENV.fetch(\"REDIS_PERSISTENT_HOST\", \"localhost\")\nREDIS_PORT = ENV.fetch(\"\
-      REDIS_PORT\", 6379)\nREPORT_PATH = ENV.fetch(\"REPORT_PATH\", \"/data/reports/ontologies_report.json\"\
-      )\nREPOSITORY_FOLDER = ENV.fetch(\"REPOSITORY_FOLDER\", \"/data/repository\"\
-      )\nREST_URL_PREFIX = ENV.fetch(\"REST_URL_PREFIX\", \"http://localhost:9393\"\
-      )\nSOLR_PROP_SEARCH_URL = ENV.fetch(\"SOLR_PROP_SEARCH_URL\", \"http://localhost:8983/solr/prop_search_core1\"\
+    - "if [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron; elif\
+      \ [ -d /srv/ontoportal/ontologies_api ]; then cd /srv/ontoportal/ontologies_api;\
+      \ elif [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron;\
+      \ fi\ngit config --global --add safe.directory '*' || true\nmkdir -p /data/repository\
+      \ /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids\
+      \ /data/bundle/cron /srv/ontoportal/data\nrm -rf log logs tmp /usr/local/hist\
+      \ || true\nln -snf /data/cron/logs log\nln -snf /data/cron/logs logs\nln -snf\
+      \ /data/cron/tmp tmp\nln -snf /data/history /usr/local/hist\nln -snf /data/repository\
+      \ /srv/ontoportal/data/repository\nln -snf /data/reports /srv/ontoportal/data/reports\n\
+      ln -snf /data/mgrep /srv/ontoportal/data/mgrep\nmkdir -p config/environments\n\
+      cat > config/environments/compose.rb <<RUBY\nrequire \"active_support/all\"\n\
+      require \"active_support/isolated_execution_state\"\nrequire \"sparql/client\"\
+      \n\nmodule SparqlClientUpdatePatch\n  def update(query, **options)\n    @op\
+      \ = :update\n\n    if @cache.redis_cache\n      q_opts = query.respond_to?(:options)\
+      \ ? (query.options || {}) : options\n      bypass = q_opts[:bypass_cache]\n\
+      \      graph = q_opts[:graph] || q_opts[:graphs]\n      if !bypass && graph\n\
+      \        @cache.invalidate(graph)\n      end\n    end\n\n    @alt_endpoint =\
+      \ options[:endpoint]\n    @logger.log(query, user: options[:user], cached: false)\
+      \ do\n      case @url\n      when RDF::Queryable\n        require \"sparql\"\
+      \ unless defined?(::SPARQL::Grammar)\n        SPARQL.execute(query, @url, update:\
+      \ true, optimize: true, **options)\n      else\n        response(query, **options)\n\
+      \      end\n    end\n    self\n  end\nend\nSPARQL::Client.prepend(SparqlClientUpdatePatch)\
+      \ unless SPARQL::Client.ancestors.include?(SparqlClientUpdatePatch)\n\nGOO_BACKEND_NAME\
+      \ = ENV.fetch(\"GOO_BACKEND_NAME\", \"virtuoso\")\nGOO_HOST = ENV.fetch(\"GOO_HOST\"\
+      , \"localhost\")\nGOO_PATH_DATA = ENV.fetch(\"GOO_PATH_DATA\", \"/sparql/\"\
+      )\nGOO_PATH_QUERY = ENV.fetch(\"GOO_PATH_QUERY\", \"/sparql/\")\nGOO_PATH_UPDATE\
+      \ = ENV.fetch(\"GOO_PATH_UPDATE\", \"/sparql/\")\nGOO_PORT = ENV.fetch(\"GOO_PORT\"\
+      , 8890)\nMGREP_HOST = ENV.fetch(\"MGREP_HOST\", \"localhost\")\nMGREP_PORT =\
+      \ ENV.fetch(\"MGREP_PORT\", 55556)\nMGREP_DICT_PATH = ENV.fetch(\"MGREP_DICT_PATH\"\
+      , \"/data/mgrep/dictionary.txt\")\nREDIS_GOO_CACHE_HOST = ENV.fetch(\"REDIS_GOO_CACHE_HOST\"\
+      , \"localhost\")\nREDIS_HTTP_CACHE_HOST = ENV.fetch(\"REDIS_HTTP_CACHE_HOST\"\
+      , \"localhost\")\nREDIS_PERSISTENT_HOST = ENV.fetch(\"REDIS_PERSISTENT_HOST\"\
+      , \"localhost\")\nREDIS_PORT = ENV.fetch(\"REDIS_PORT\", 6379)\nREPORT_PATH\
+      \ = ENV.fetch(\"REPORT_PATH\", \"/data/reports/ontologies_report.json\")\nREPOSITORY_FOLDER\
+      \ = ENV.fetch(\"REPOSITORY_FOLDER\", \"/data/repository\")\nREST_URL_PREFIX\
+      \ = ENV.fetch(\"REST_URL_PREFIX\", \"http://localhost:9393\")\nSOLR_PROP_SEARCH_URL\
+      \ = ENV.fetch(\"SOLR_PROP_SEARCH_URL\", \"http://localhost:8983/solr/prop_search_core1\"\
       )\nSOLR_TERM_SEARCH_URL = ENV.fetch(\"SOLR_TERM_SEARCH_URL\", \"http://localhost:8983/solr/term_search_core1\"\
-      )\n\nrequire \"net/http\"\nrequire \"json\"\n\nmodule SOLR\n  module Administration\n\
-      \    def solr_alive?\n      uri = URI.parse(\"#{@solr_url}/#{@collection_name}/admin/ping\"\
-      )\n      res = Net::HTTP.get_response(uri)\n      return true if res.is_a?(Net::HTTPSuccess)\
-      \ && (JSON.parse(res.body)[\"status\"] == \"OK\" rescue false)\n\n      uri\
-      \ = URI.parse(\"#{@solr_url}/admin/info/system\")\n      res = Net::HTTP.get_response(uri)\n\
-      \      res.is_a?(Net::HTTPSuccess)\n    rescue StandardError\n      false\n\
-      \    end\n\n    def collection_exists?(collection_name = @collection_name)\n\
-      \      uri = URI.parse(\"#{@solr_url}/#{collection_name}/admin/ping\")\n   \
-      \   res = Net::HTTP.get_response(uri)\n      return true if res.is_a?(Net::HTTPSuccess)\
-      \ && (JSON.parse(res.body)[\"status\"] == \"OK\" rescue false)\n\n      solr_alive?\n\
-      \    rescue StandardError\n      false\n    end\n  end\nend\n\nif defined?(LinkedData)\n\
+      )\n\nrequire \"net/http\"\nrequire \"json\"\nrequire \"uri\"\n\nmodule SOLR\n\
+      \  module Administration\n    def solr_alive?\n      uri = URI(\"#{@solr_url}/admin/info/system?wt=json\"\
+      )\n      res = Net::HTTP.get_response(uri)\n      res.is_a?(Net::HTTPSuccess)\
+      \ && (JSON.parse(res.body).dig(\"responseHeader\", \"status\") == 0 rescue false)\n\
+      \    rescue StandardError\n      false\n    end\n\n    def fetch_all_collections\n\
+      \      uri = URI(\"#{@solr_url}/admin/cores?action=STATUS&wt=json\")\n     \
+      \ res = Net::HTTP.get_response(uri)\n      data = (JSON.parse(res.body) rescue\
+      \ {}) if res.is_a?(Net::HTTPSuccess)\n      if res.is_a?(Net::HTTPSuccess) &&\
+      \ data.dig(\"responseHeader\", \"status\") == 0\n        (data[\"status\"] ||\
+      \ {}).keys\n      else\n        raise \"Failed to fetch Solr collections: #{res&.code}\
+      \ #{res&.body}\"\n      end\n    end\n\n    def collection_exists?(collection_name\
+      \ = @collection_name)\n      fetch_all_collections.include?(collection_name.to_s)\n\
+      \    end\n\n    def create_collection(collection_name = @collection_name, _num_shards\
+      \ = 1, _replication_factor = 1)\n      return if collection_exists?(collection_name)\n\
+      \n      params = URI.encode_www_form(\n        action: \"CREATE\",\n       \
+      \ name: collection_name.to_s,\n        instanceDir: collection_name.to_s,\n\
+      \        configSet: \"_default\",\n        wt: \"json\"\n      )\n      uri\
+      \ = URI(\"#{@solr_url}/admin/cores?#{params}\")\n      req = Net::HTTP::Post.new(uri)\n\
+      \      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme ==\
+      \ \"https\") { |http| http.request(req) }\n      data = (JSON.parse(res.body)\
+      \ rescue {}) if res.is_a?(Net::HTTPSuccess)\n      unless res.is_a?(Net::HTTPSuccess)\
+      \ && data.dig(\"responseHeader\", \"status\") == 0\n        raise \"Failed to\
+      \ create Solr collection #{collection_name}: #{res&.code} #{res&.body}\"\n \
+      \     end\n    end\n\n    def delete_collection(collection_name = @collection_name)\n\
+      \      return unless collection_exists?(collection_name)\n\n      params = URI.encode_www_form(\n\
+      \        action: \"UNLOAD\",\n        core: collection_name.to_s,\n        deleteIndex:\
+      \ \"true\",\n        deleteDataDir: \"true\",\n        deleteInstanceDir: \"\
+      true\",\n        wt: \"json\"\n      )\n      uri = URI(\"#{@solr_url}/admin/cores?#{params}\"\
+      )\n      req = Net::HTTP::Post.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
+      \ uri.port, use_ssl: uri.scheme == \"https\") { |http| http.request(req) }\n\
+      \      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
+      \      unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
+      status\") == 0\n        raise \"Failed to delete Solr collection #{collection_name}:\
+      \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\nend\n\nif defined?(LinkedData)\n\
       \  LinkedData.config do |config|\n    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n\
       \    config.goo_host = GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n\
       \    config.goo_path_query = GOO_PATH_QUERY.to_s\n    config.goo_path_data =\
@@ -305,10 +444,17 @@ services:
       \ = REDIS_HTTP_CACHE_HOST.to_s\n    config.http_redis_port = REDIS_PORT.to_i\n\
       \    config.ontology_report_path = REPORT_PATH\n    config.enable_req_timeout\
       \ = false\n    config.enable_throttling = false\n  end\nend\n\nGoo.use_cache\
-      \ = true if defined?(Goo)\nRUBY\ngem install bundler -v 2.3.27 >/dev/null 2>&1\
-      \ || true\nbundle _2.3.27_ check || bundle _2.3.27_ install\nbundle _2.3.27_\
-      \ exec ruby <<'RUBY' || echo \"WARN: could not patch Virtuoso Goo handling\"\
-      \ >&2\ndef patch_gem(gem_name, relative_path, replacements)\n  path = File.join(Gem::Specification.find_by_name(gem_name).full_gem_path,\
+      \ = true if defined?(Goo)\nRUBY\ncp config/environments/compose.rb config/config.rb\
+      \ 2>/dev/null || true\ngem install bundler -v 2.3.27 >/dev/null 2>&1 || true\n\
+      bundle _2.3.27_ check || bundle _2.3.27_ install\nNCBO_CRON_DIR=\"$$(bundle\
+      \ _2.3.27_ show ncbo_cron 2>/dev/null || true)\"; if [ -n \"$$NCBO_CRON_DIR\"\
+      \ ]; then mkdir -p \"$$NCBO_CRON_DIR/config\"; cp config/environments/compose.rb\
+      \ \"$$NCBO_CRON_DIR/config/config.rb\"; fi\nANNO_DIR=\"$$(bundle _2.3.27_ show\
+      \ ncbo_annotator 2>/dev/null || true)\"; if [ -n \"$$ANNO_DIR\" ] && [ -d \"\
+      $$ANNO_DIR/lib/Lemmatizer\" ]; then ln -snf \"$$ANNO_DIR/lib/Lemmatizer\" lib/Lemmatizer\
+      \ || true; fi\nbundle _2.3.27_ exec ruby <<'RUBY' || echo \"WARN: could not\
+      \ patch Virtuoso Goo handling\" >&2\ndef patch_gem(gem_name, relative_path,\
+      \ replacements)\n  path = File.join(Gem::Specification.find_by_name(gem_name).full_gem_path,\
       \ relative_path)\n  source = File.read(path)\n  patched = replacements.reduce(source)\
       \ { |text, (old, new_text)| text.gsub(old, new_text) }\n  File.write(path, patched)\
       \ if patched != source\nend\ndef append_gem_patch(gem_name, relative_path, marker,\
@@ -317,23 +463,28 @@ services:
       \\n\" + patch) unless source.include?(marker)\nend\npatch_gem(\"ontologies_linked_data\"\
       , \"lib/ontologies_linked_data/services/submission_process/operations/submission_rdf_generator.rb\"\
       , {\n  \" if e.response&.body\" => \" if e.respond_to?(:response) && e.response&.body\"\
-      \n})\npatch_gem(\"goo\", \"lib/goo/sparql/client.rb\", {\n  \"DROP GRAPH <\"\
-      \ => \"DROP SILENT GRAPH <\",\n  \"chunk_lines = 500_000 # number of line\"\
-      \ => \"chunk_lines = Integer(ENV.fetch(\\\"GOO_APPEND_CHUNK_LINES\\\", \\\"\
-      2000\\\")) # patched for Virtuoso update payload size\"\n})\nappend_gem_patch(\"\
-      goo\", \"lib/goo/sparql/client.rb\", \"GooVirtuosoAppendPatch\", <<'RUBY_PATCH')\n\
-      # ontoportal-deployment: Virtuoso does not accept Goo's Graph Store append POST\
-      \ on /sparql/.\nmodule GooVirtuosoAppendPatch\n  private\n\n  def execute_append_request(graph,\
-      \ data_file, mime_type_in)\n    return super unless Goo.sparql_backend_name.to_s\
-      \ == \"virtuoso\"\n\n    graph_iri = graph.is_a?(Array) ? graph.first.to_s :\
-      \ graph.to_s\n    Goo.sparql_update_client.update(\"INSERT DATA { GRAPH <#{graph_iri}>\
-      \ {\\n#{data_file}\\n} }\")\n  end\nend\nGoo::SPARQL::Client.prepend(GooVirtuosoAppendPatch)\
-      \ unless Goo::SPARQL::Client.ancestors.include?(GooVirtuosoAppendPatch)\nRUBY_PATCH\n\
-      RUBY\nif [ ! -f /data/cron/.admin_seeded ]; then if bundle _2.3.27_ exec rake\
-      \ \"user:create[$${ADMIN_USERNAME},$${ADMIN_EMAIL},$${ADMIN_PASSWORD}]\"; then\
-      \ bundle _2.3.27_ exec rake \"user:adminify[$${ADMIN_USERNAME}]\" || true; touch\
-      \ /data/cron/.admin_seeded; else echo \"WARN: admin user seed failed or already\
-      \ exists\" >&2; fi; fi\nexec bundle _2.3.27_ exec bin/ncbo_cron"
+      \n})\npatch_gem(\"ncbo_cron\", \"bin/ncbo_cron\", {\n  \"require 'sys/proctable'\"\
+      \ => \"begin; require 'sys/proctable'; rescue LoadError; end\"\n})\npatch_gem(\"\
+      goo\", \"lib/goo/sparql/client.rb\", {\n  \"DROP GRAPH <\" => \"DROP SILENT\
+      \ GRAPH <\",\n  \"chunk_lines = 500_000 # number of line\" => \"chunk_lines\
+      \ = Integer(ENV.fetch(\\\"GOO_APPEND_CHUNK_LINES\\\", \\\"2000\\\")) # patched\
+      \ for Virtuoso update payload size\"\n})\nappend_gem_patch(\"goo\", \"lib/goo/sparql/client.rb\"\
+      , \"GooVirtuosoAppendPatch\", <<'RUBY_PATCH')\n# ontoportal-deployment: Virtuoso\
+      \ does not accept Goo's Graph Store append POST on /sparql/.\nmodule GooVirtuosoAppendPatch\n\
+      \  private\n\n  def execute_append_request(graph, data_file, mime_type_in)\n\
+      \    return super unless Goo.sparql_backend_name.to_s == \"virtuoso\"\n\n  \
+      \  graph_iri = graph.is_a?(Array) ? graph.first.to_s : graph.to_s\n    Goo.sparql_update_client.update(\"\
+      INSERT DATA { GRAPH <#{graph_iri}> {\\n#{data_file}\\n} }\", graph: graph)\n\
+      \  end\nend\nGoo::SPARQL::Client.prepend(GooVirtuosoAppendPatch) unless Goo::SPARQL::Client.ancestors.include?(GooVirtuosoAppendPatch)\n\
+      RUBY_PATCH\nRUBY\nif [ ! -f /data/cron/.admin_seeded ]; then RAKE_OPTS=\"\"\
+      ; if [ -n \"$$NCBO_CRON_DIR\" ] && [ -d \"$$NCBO_CRON_DIR/rakelib\" ]; then\
+      \ RAKE_OPTS=\"--rakelibdir $$NCBO_CRON_DIR/rakelib\"; fi; if bundle _2.3.27_\
+      \ exec rake $$RAKE_OPTS \"user:create[$$ADMIN_USERNAME,$$ADMIN_EMAIL,$$ADMIN_PASSWORD]\"\
+      ; then bundle _2.3.27_ exec rake $$RAKE_OPTS \"user:adminify[$$ADMIN_USERNAME]\"\
+      \ || true; touch /data/cron/.admin_seeded; else echo \"WARN: admin user seed\
+      \ failed or already exists\" >&2; fi; fi\nif [ -f bin/ncbo_cron ]; then exec\
+      \ bundle _2.3.27_ exec bin/ncbo_cron; else exec bundle _2.3.27_ exec ncbo_cron;\
+      \ fi"
   ui:
     image: ghcr.io/matportal/bioportal_web_ui:master
     restart: unless-stopped
@@ -404,6 +555,11 @@ services:
       gem install bundler -v 2.3.27 >/dev/null 2>&1 || true
 
       bundle _2.3.27_ check || bundle _2.3.27_ install
+
+      CLIENT_GEM_PATH="$$(bundle _2.3.27_ show ontologies_api_client 2>/dev/null ||
+      true)"; if [ -n "$$CLIENT_GEM_PATH" ] && [ -f "$$CLIENT_GEM_PATH/lib/ontologies_api_client/models/class.rb"
+      ]; then sed -i ''s/hasChildren,childre,/hasChildren,children,/g'' "$$CLIENT_GEM_PATH/lib/ontologies_api_client/models/class.rb"
+      || true; fi
 
       for i in $$(seq 1 30); do if bundle _2.3.27_ exec rails db:prepare; then break;
       fi; if [ "$$i" = "30" ]; then echo "ERROR: rails db:prepare failed after $${i}

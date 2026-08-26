@@ -59,20 +59,26 @@ spec:
           args:
             - |
               set -euo pipefail
-              gem_dir=$(ruby -e 'require "bundler/setup"; print Gem::Specification.find_by_name("ontologies_linked_data").full_gem_path' 2>/dev/null || true)
-              src="${gem_dir}/config/solr"
-              default_conf="${gem_dir}/test/solr/configsets/_default/conf"
-              if [ ! -d "${src}" ] || [ ! -d "${default_conf}" ]; then
-                echo "ERROR: ontologies_linked_data Solr configsets not found" >&2
+              gem_dir=$(ruby -e 'require "bundler/setup"; %w[ontologies_linked_data ncbo_annotator ncbo_ontology_recommender].each { |g| p = Gem::Specification.find_by_name(g).full_gem_path rescue nil; if p && Dir.exist?("#{p}/config/solr"); print p; break; end }' 2>/dev/null || true)
+              default_conf=$(ruby -e 'require "bundler/setup"; %w[ontologies_linked_data ncbo_annotator ncbo_cron ontologies_api].each { |g| p = Gem::Specification.find_by_name(g).full_gem_path rescue nil; if p && Dir.exist?("#{p}/test/solr/configsets/_default/conf"); print "#{p}/test/solr/configsets/_default/conf"; break; end }' 2>/dev/null || true)
+              if [ -z "${gem_dir}" ] || [ -z "${default_conf}" ]; then
+                echo "ERROR: Solr configsets not found" >&2
                 exit 1
               fi
+              src="${gem_dir}/config/solr"
               mkdir -p {{ $root.Values.solr.configsets.mountPath | quote }}
-              rm -rf {{ printf "%s/term_search" $root.Values.solr.configsets.mountPath | quote }} {{ printf "%s/property_search" $root.Values.solr.configsets.mountPath | quote }}
-              mkdir -p {{ printf "%s/term_search/conf" $root.Values.solr.configsets.mountPath | quote }} {{ printf "%s/property_search/conf" $root.Values.solr.configsets.mountPath | quote }}
+              rm -rf {{ printf "%s/term_search" $root.Values.solr.configsets.mountPath | quote }} {{ printf "%s/property_search" $root.Values.solr.configsets.mountPath | quote }} {{ printf "%s/_default" $root.Values.solr.configsets.mountPath | quote }}
+              mkdir -p {{ printf "%s/term_search/conf" $root.Values.solr.configsets.mountPath | quote }} {{ printf "%s/property_search/conf" $root.Values.solr.configsets.mountPath | quote }} {{ printf "%s/_default/conf" $root.Values.solr.configsets.mountPath | quote }}
+              cp -a "${default_conf}/." {{ printf "%s/_default/conf/" $root.Values.solr.configsets.mountPath | quote }}
               cp -a "${default_conf}/." {{ printf "%s/term_search/conf/" $root.Values.solr.configsets.mountPath | quote }}
               cp -a "${default_conf}/." {{ printf "%s/property_search/conf/" $root.Values.solr.configsets.mountPath | quote }}
               cp -a "${src}/term_search/." {{ printf "%s/term_search/conf/" $root.Values.solr.configsets.mountPath | quote }}
               cp -a "${src}/property_search/." {{ printf "%s/property_search/conf/" $root.Values.solr.configsets.mountPath | quote }}
+              for schema_file in {{ printf "%s/term_search/conf/schema.xml %s/property_search/conf/schema.xml" $root.Values.solr.configsets.mountPath $root.Values.solr.configsets.mountPath }}; do
+                if [ -f "${schema_file}" ] && ! grep -q 'name="resource_model"' "${schema_file}"; then
+                  sed -i '/name="resource_id"/a \    <field name="resource_model" type="string" indexed="true" stored="true" multiValued="false" />' "${schema_file}"
+                fi
+              done
           volumeMounts:
             - name: solr-configsets
               mountPath: {{ $root.Values.solr.configsets.mountPath | quote }}
@@ -90,7 +96,12 @@ spec:
             - -lc
             - |
               set -euo pipefail
-              mkdir -p /var/solr/data
+              mkdir -p /var/solr/data/configsets
+              if [ -d {{ printf "%s/_default" $root.Values.solr.configsets.mountPath | quote }} ]; then
+                cp -r {{ printf "%s/_default" $root.Values.solr.configsets.mountPath | quote }} /var/solr/data/configsets/_default
+              elif [ -d /opt/solr/server/solr/configsets/_default ]; then
+                cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default
+              fi
               {{- if $item.core }}
               if [ -d {{ $item.configPath | quote }} ]; then
                 exec solr-precreate {{ $item.core | quote }} {{ $item.configPath | quote }}

@@ -58,8 +58,8 @@ images:
     tag: master
     pullPolicy: IfNotPresent
   cron:
-    repository: bioportal/ncbo_cron
-    tag: latest
+    repository: agroportal/ontologies_api
+    tag: master
     pullPolicy: IfNotPresent
   ui:
     repository: agroportal/ontoportal_web_ui

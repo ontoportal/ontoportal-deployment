@@ -155,10 +155,6 @@ spec:
               ln -snf /data/repository /srv/ontoportal/data/repository
               ln -snf /data/reports /srv/ontoportal/data/reports
               ln -snf /data/mgrep /srv/ontoportal/data/mgrep
-              ANNO_DIR=$(bundle show ncbo_annotator 2>/dev/null || true)
-              if [ -n "${ANNO_DIR}" ] && [ -d "${ANNO_DIR}/lib/Lemmatizer" ]; then
-                ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true
-              fi
               {{ include "ontoportal.runtimeConfigScript" . | nindent 14 }}
               {{- if .Values.patches.matportalApiParentNormalization.enabled }}
               cp /opt/ontoportal/matportal-patches/matportal_parent_normalization.rb {{ .Values.api.appDir }}/matportal_parent_normalization.rb
@@ -171,6 +167,10 @@ spec:
 {{ . | nindent 14 }}
               {{- end }}
               bundle check || bundle install
+              ANNO_DIR=$(bundle show ncbo_annotator 2>/dev/null || true)
+              if [ -n "${ANNO_DIR}" ] && [ -d "${ANNO_DIR}/lib/Lemmatizer" ]; then
+                ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true
+              fi
               rm -f tmp/pids/*.pid || true
               exec {{ .Values.api.startCommand }}
           startupProbe:

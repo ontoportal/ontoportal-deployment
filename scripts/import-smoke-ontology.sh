@@ -9,7 +9,7 @@ PORT_FORWARD_WAIT_SECONDS="${PORT_FORWARD_WAIT_SECONDS:-20}"
 
 NCBO_PROCESS_TIMEOUT_SECONDS="${NCBO_PROCESS_TIMEOUT_SECONDS:-900}"
 NCBO_PROCESS_LOG_TAIL="${NCBO_PROCESS_LOG_TAIL:-200}"
-NCBO_PROCESS_TASKS="${NCBO_PROCESS_TASKS:-process_rdf,generate_labels,index_search,process_annotator}"
+NCBO_PROCESS_TASKS="${NCBO_PROCESS_TASKS:-process_rdf,generate_labels,index_all_data,index_search,process_annotator}"
 SMOKE_ONTOLOGY_ACRONYM="${SMOKE_ONTOLOGY_ACRONYM:-SMOKETEST}"
 SMOKE_SEARCH_TERM="${SMOKE_SEARCH_TERM:-Smoke Test Class}"
 SMOKE_ANNOTATOR_TEXT="${SMOKE_ANNOTATOR_TEXT:-Smoke Test Class}"
@@ -173,6 +173,7 @@ submission_status=$(api_curl -sS -o "${TMP_DIR}/submission-response.json" -w "%{
   -F "released=$(date +%Y-%m-%d)" \
   -F "status=production" \
   -F "hasOntologyLanguage=OWL" \
+  -F "URI=http://example.org/smoke" \
   -F "version=1.0.0" \
   -F "file=@${TMP_DIR}/smoke.ttl")
 if [[ "${submission_status}" != "201" ]]; then
@@ -192,7 +193,7 @@ if "${KUBECTL}" -n "${NAMESPACE}" get deployment "${SERVICE_PREFIX}-cron" >/dev/
     set +e
     timeout --kill-after=30s "${NCBO_PROCESS_TIMEOUT_SECONDS}s" \
       "${KUBECTL}" -n "${NAMESPACE}" exec "${CRON_POD}" -- \
-      bundle exec bin/ncbo_ontology_process -o "${SMOKE_ONTOLOGY_ACRONYM}" -t "${NCBO_PROCESS_TASKS}" >"${TMP_DIR}/ontology-process.log" 2>&1
+      bash -c 'if [ -f bin/ncbo_ontology_process ]; then exec bundle exec bin/ncbo_ontology_process "$@"; else exec bundle exec ncbo_ontology_process "$@"; fi' -- -o "${SMOKE_ONTOLOGY_ACRONYM}" -t "${NCBO_PROCESS_TASKS}" >"${TMP_DIR}/ontology-process.log" 2>&1
     process_rc=$?
     set -e
     case "${process_rc}" in

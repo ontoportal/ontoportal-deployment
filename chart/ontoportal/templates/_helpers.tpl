@@ -183,6 +183,38 @@ annotations:
 {{- define "ontoportal.runtimeConfigScript" -}}
 mkdir -p config/environments
 cat > "config/environments/${RACK_ENV:-production}.rb" <<RUBY
+require "active_support/all"
+require "active_support/isolated_execution_state"
+require "sparql/client"
+
+module SparqlClientUpdatePatch
+  def update(query, **options)
+    @op = :update
+
+    if @cache.redis_cache
+      q_opts = query.respond_to?(:options) ? (query.options || {}) : options
+      bypass = q_opts[:bypass_cache]
+      graph = q_opts[:graph] || q_opts[:graphs]
+      if !bypass && graph
+        @cache.invalidate(graph)
+      end
+    end
+
+    @alt_endpoint = options[:endpoint]
+    @logger.log(query, user: options[:user], cached: false) do
+      case @url
+      when RDF::Queryable
+        require "sparql" unless defined?(::SPARQL::Grammar)
+        SPARQL.execute(query, @url, update: true, optimize: true, **options)
+      else
+        response(query, **options)
+      end
+    end
+    self
+  end
+end
+SPARQL::Client.prepend(SparqlClientUpdatePatch) unless SPARQL::Client.ancestors.include?(SparqlClientUpdatePatch)
+
 GOO_BACKEND_NAME = ENV.fetch("GOO_BACKEND_NAME", "virtuoso")
 GOO_HOST = ENV.fetch("GOO_HOST", "localhost")
 GOO_PATH_DATA = ENV.fetch("GOO_PATH_DATA", "/sparql/")
@@ -204,29 +236,70 @@ SOLR_TERM_SEARCH_URL = ENV.fetch("SOLR_TERM_SEARCH_URL", "http://localhost:8983/
 
 require "net/http"
 require "json"
+require "uri"
 
 module SOLR
   module Administration
     def solr_alive?
-      uri = URI.parse("#{@solr_url}/#{@collection_name}/admin/ping")
+      uri = URI("#{@solr_url}/admin/info/system?wt=json")
       res = Net::HTTP.get_response(uri)
-      return true if res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body)["status"] == "OK" rescue false)
-
-      uri = URI.parse("#{@solr_url}/admin/info/system")
-      res = Net::HTTP.get_response(uri)
-      res.is_a?(Net::HTTPSuccess)
+      res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body).dig("responseHeader", "status") == 0 rescue false)
     rescue StandardError
       false
     end
 
-    def collection_exists?(collection_name = @collection_name)
-      uri = URI.parse("#{@solr_url}/#{collection_name}/admin/ping")
+    def fetch_all_collections
+      uri = URI("#{@solr_url}/admin/cores?action=STATUS&wt=json")
       res = Net::HTTP.get_response(uri)
-      return true if res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body)["status"] == "OK" rescue false)
+      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
+      if res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
+        (data["status"] || {}).keys
+      else
+        raise "Failed to fetch Solr collections: #{res&.code} #{res&.body}"
+      end
+    end
 
-      solr_alive?
-    rescue StandardError
-      false
+    def collection_exists?(collection_name = @collection_name)
+      fetch_all_collections.include?(collection_name.to_s)
+    end
+
+    def create_collection(collection_name = @collection_name, _num_shards = 1, _replication_factor = 1)
+      return if collection_exists?(collection_name)
+
+      params = URI.encode_www_form(
+        action: "CREATE",
+        name: collection_name.to_s,
+        instanceDir: collection_name.to_s,
+        configSet: "_default",
+        wt: "json"
+      )
+      uri = URI("#{@solr_url}/admin/cores?#{params}")
+      req = Net::HTTP::Post.new(uri)
+      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(req) }
+      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
+      unless res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
+        raise "Failed to create Solr collection #{collection_name}: #{res&.code} #{res&.body}"
+      end
+    end
+
+    def delete_collection(collection_name = @collection_name)
+      return unless collection_exists?(collection_name)
+
+      params = URI.encode_www_form(
+        action: "UNLOAD",
+        core: collection_name.to_s,
+        deleteIndex: "true",
+        deleteDataDir: "true",
+        deleteInstanceDir: "true",
+        wt: "json"
+      )
+      uri = URI("#{@solr_url}/admin/cores?#{params}")
+      req = Net::HTTP::Post.new(uri)
+      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(req) }
+      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
+      unless res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
+        raise "Failed to delete Solr collection #{collection_name}: #{res&.code} #{res&.body}"
+      end
     end
   end
 end

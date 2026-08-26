@@ -149,8 +149,32 @@ def validate_runtime_solr_compatibility() -> None:
     helpers_text = (ROOT / "chart" / "ontoportal" / "templates" / "_helpers.tpl").read_text(encoding="utf-8")
     if "SOLR_TERM_SEARCH_URL.to_s.sub(%r{/term_search_core1/?\\z}" not in helpers_text:
         raise SystemExit("Runtime config must strip /term_search_core1 for Solr base URL compatibility")
-    if "module Administration" not in helpers_text or "solr_alive?" not in helpers_text:
-        raise SystemExit("Runtime config must override SOLR::Administration for standalone core ping compatibility")
+    if (
+        "module Administration" not in helpers_text
+        or "solr_alive?" not in helpers_text
+        or "fetch_all_collections" not in helpers_text
+        or "create_collection" not in helpers_text
+    ):
+        raise SystemExit("Runtime config must override SOLR::Administration with CoreAdmin methods")
+    if "@cache.invalidate(graph.to_s)" in helpers_text:
+        raise SystemExit("Cache invalidation must pass graph object directly, not graph.to_s")
+    if "@cache.invalidate(graph)" not in helpers_text:
+        raise SystemExit("Cache invalidation must pass graph object directly")
+
+
+def validate_solr_and_cron_fallbacks() -> None:
+    cron_tpl = (ROOT / "chart" / "ontoportal" / "templates" / "cron.yaml").read_text(encoding="utf-8")
+    solr_tpl = (ROOT / "chart" / "ontoportal" / "templates" / "solr.yaml").read_text(encoding="utf-8")
+    render_py = (ROOT / "scripts" / "render-compose.py").read_text(encoding="utf-8")
+
+    if 'name="resource_model"' not in solr_tpl or 'name="resource_model"' not in render_py:
+        raise SystemExit("Solr schema setup in Helm and Compose renderer must configure resource_model field")
+
+    if 'NCBO_IMPORT="ncbo_ontology_import"' not in cron_tpl or 'NCBO_IMPORT="ncbo_ontology_import"' not in render_py:
+        raise SystemExit("Starter ontology import must support executable fallback in Helm and Compose")
+
+    if 'CRON_CMD={{ .Values.cron.startCommand | quote }}' not in cron_tpl:
+        raise SystemExit("Helm cron startup must honor custom startCommand with safe fallback")
 
 
 def main() -> None:
@@ -158,6 +182,7 @@ def main() -> None:
     validate_profiles()
     validate_no_hardcoded_matportal_services()
     validate_runtime_solr_compatibility()
+    validate_solr_and_cron_fallbacks()
     validate_image_build_configs()
     render_compose_profiles()
     print("validation passed")
