@@ -348,6 +348,16 @@ if defined?(NcboCron)
   end
 end
 
+if defined?(LinkedData::OntologiesAPI)
+  LinkedData::OntologiesAPI.config do |config|
+    config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s
+    config.http_redis_port = REDIS_PORT.to_i
+    config.ontology_report_path = REPORT_PATH
+    config.enable_req_timeout = false
+    config.enable_throttling = false
+  end
+end
+
 Goo.use_cache = true if defined?(Goo)
 RUBY
 {{- end -}}
