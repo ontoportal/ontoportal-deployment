@@ -10,7 +10,7 @@ Take this scaffold from a generated deployment baseline to a tested deployment r
 
 Do not fork the deployment logic into separate hand-maintained Kubernetes and Compose implementations. Kubernetes Helm values are the source of truth; Compose must stay generated.
 
-For Windows Docker Desktop validation, follow `docs/tutorial-kind-windows.md` exactly. Its `kind-local` overlay and PowerShell checks are the canonical Kind path; the Bash helpers are for Linux, WSL, or Git Bash and are not claimed to run natively in PowerShell.
+For local Kind validation, see `docs/tutorial-kind-linux.md` (Linux tested) or `docs/tutorial-kind-windows.md` (Windows PowerShell guide, not live-tested on Windows). The `kind-local` overlay disables ingress and relies on `kubectl port-forward`. The Bash helpers under `scripts/` are for Linux, WSL, or Git Bash and are not claimed to run natively in PowerShell.
 
 ## Ground rules for development
 

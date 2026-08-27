@@ -1,8 +1,19 @@
-# Disposable Kind on Windows (canonical local path)
+# Disposable Kind on Windows (PowerShell guide)
+
+> **IMPORTANT: NOT LIVE-TESTED ON WINDOWS**
+>
+> This guide is an adjacent PowerShell route derived from the verified Linux
+> Kind deployment ([docs/tutorial-kind-linux.md](tutorial-kind-linux.md)).
+> While the commands and syntax have been reviewed for Windows PowerShell and
+> Docker Desktop, this sequence has **NOT been executed or live-tested on Windows**.
+>
+> For the primary, canonical, and live-tested Kind deployment path, use:
+> **[docs/tutorial-kind-linux.md](tutorial-kind-linux.md)**.
 
 Use this tutorial for a clean OntoPortal validation on Windows with Docker
-Desktop and Kind. It is the canonical Kind path; the k3s tutorials are separate
-and should not be combined with it.
+Desktop and Kind. For the verified Linux Kind deployment, see
+`docs/tutorial-kind-linux.md`. The k3s tutorials are separate and should not be
+combined with Kind.
 
 This path uses a disposable cluster, the clean profile, Kind's pinned
 local-path provisioner, and `kubectl port-forward`. It does not install an

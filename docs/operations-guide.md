@@ -10,7 +10,7 @@ Maintain this deployment repository for three supported modes:
 
 Do not fork the deployment logic into separate hand-maintained Kubernetes and Compose implementations. Kubernetes Helm values are the source of truth; Compose must stay generated.
 
-The acceptance commands in this guide are k3s-oriented. For Windows Docker Desktop/Kind, use `docs/tutorial-kind-windows.md` instead; do not substitute the k3s profile or ingress settings.
+The acceptance commands in this guide are k3s-oriented. For local Kind clusters, see `docs/tutorial-kind-linux.md` (Linux tested) or `docs/tutorial-kind-windows.md` (Windows guide) instead; do not substitute the k3s profile or ingress settings.
 
 ## Maintenance ground rules
 

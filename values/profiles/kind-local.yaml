@@ -1,5 +1,5 @@
-# Disposable Kind overlay for local Docker/Windows validation.
-# The Windows procedure applies Kind's pinned local-path provisioner manifest
+# Disposable Kind overlay for local Docker validation (Linux tested, Windows guide).
+# The Kind procedure applies Kind's pinned local-path provisioner manifest
 # first; it provides the `standard` StorageClass. Kind has no ingress controller,
 # so this path uses kubectl port-forward instead.
 

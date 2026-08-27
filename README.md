@@ -36,7 +36,7 @@ scripts/                           Deployment, smoke-test, maintenance, Compose/
 scripts/addons/                    Add-on helpers that do not belong in the app chart
 terraform/                         Helm-on-k3s Terraform deployment
 terraform/examples/                tfvars examples for clean and MatPortal profiles
-docs/                              Kind/Windows and k3s tutorials, HA, backups, maintenance, security, observability, production, and operations docs
+docs/                              Kind (Linux tested, Windows guide) and k3s tutorials, HA, backups, maintenance, security, observability, production, and operations docs
 ```
 
 ## Clone and validate
@@ -66,15 +66,19 @@ See `chart/ontoportal/README.md` for the secret key contract.
 
 ## Choose one deployment path
 
-For Windows with Docker Desktop and Kind, use the canonical tutorial:
+For local development with Docker and Kind on Linux (primary tested Kind path):
 
-- `docs/tutorial-kind-windows.md`: one isolated Kind cluster, the `kind-local` overlay, explicit Secret keys, manual UI/API port-forwards, and PowerShell functional checks.
+- `docs/tutorial-kind-linux.md`: one isolated Kind cluster, the `kind-local` overlay, explicit Secret keys, manual UI/API port-forwards, and Linux smoke/import/app/UI scripts.
+
+For Windows with Docker Desktop and Kind (derived PowerShell guide, not live-tested on Windows):
+
+- `docs/tutorial-kind-windows.md`: equivalent Kind deployment using PowerShell commands and functional checks.
 
 For a laptop or single server running native k3s, prefer the separate tutorial:
 
 - `docs/tutorial-k3s-laptop-server.md`: install k3s, create Secrets, configure local/server hostnames, deploy, smoke test, upgrade, and uninstall.
 
-The short commands below are k3s-only quick validation examples. Do not combine `k3s-local` or Traefik ingress settings with the Kind tutorial.
+The short commands below are k3s-only quick validation examples. Do not combine `k3s-local` or Traefik ingress settings with the Kind tutorials.
 
 ## Fast path: clean OntoPortal on k3s
 
@@ -270,7 +274,7 @@ kubectl api-resources | grep -i '^servicemonitors' || echo 'install Prometheus O
 
 ## Production and operations docs
 
-For Windows + Kind, start with `docs/tutorial-kind-windows.md`; the k3s and operations examples below retain their explicit runtime scope.
+For local Kind clusters, start with `docs/tutorial-kind-linux.md` (Linux tested) or `docs/tutorial-kind-windows.md` (Windows PowerShell guide); the k3s and operations examples below retain their explicit runtime scope.
 
 - `docs/validation-evidence.md`: what has actually been tested and what still needs live cluster validation.
 - `docs/tutorial-k3s-laptop-server.md`: laptop/single-server k3s installation tutorial.

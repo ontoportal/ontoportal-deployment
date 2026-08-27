@@ -2,12 +2,14 @@
 
 This file records what has actually been tested for this repository and what still requires a live cluster or additional tooling.
 
-## Disposable Kind validation (2026-08-27)
+## Disposable Kind validation on Linux (2026-08-27)
 
-The canonical Windows/Kind path in `docs/tutorial-kind-windows.md` was rehearsed
-on this Linux Docker host with the same clean chart/profile command. The host
-needed a Kind kubelet feature-gate patch for its `/dev/kmsg` restriction; that
-host-only workaround is not part of the Windows sequence.
+The primary Kind path in `docs/tutorial-kind-linux.md` was executed and
+validated on this Linux Docker host with the clean chart/profile configuration.
+The host needed a Kind kubelet feature-gate patch for its `/dev/kmsg` restriction;
+that host-only workaround is not part of the standard Linux sequence.
+The Windows PowerShell guide in `docs/tutorial-kind-windows.md` is derived from
+this tested run and was reviewed, but was NOT executed or live-tested on Windows.
 
 - Kind `v0.29.0`, node image `kindest/node:v1.33.1`, and an isolated kubeconfig
   were used for the unique cluster `ontoportal-kind-20260827102747`.
@@ -233,6 +235,7 @@ Live-test fixes made from observed failures:
 
 These still require native k3s, production credentials, or additional tooling:
 
+- Windows Docker Desktop live execution (`docs/tutorial-kind-windows.md` has been reviewed, but was not live-tested on Windows);
 - native k3s install on a laptop or server following the tutorial end to end;
 - MatPortal private/runtime image rehearsal with credentials, including `ghcr.io/matportal/bioportal_web_ui:master` and the real FAIRness image;
 - Helm rollback and uninstall/reinstall while preserving PVCs;

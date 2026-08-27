@@ -22,7 +22,7 @@ Use this with any main profile on k3s. It assumes the default `local-path` stora
 
 ### `values/profiles/kind-local.yaml`
 
-Use this only with the clean profile for the disposable Docker Desktop/Kind path in `docs/tutorial-kind-windows.md`. It uses the `standard` StorageClass from Kind's pinned local-path provisioner, disables ingress, and sizes PVCs for local validation. It is not a production overlay.
+Use this only with the clean profile for the disposable Kind path in `docs/tutorial-kind-linux.md` (Linux, tested) or `docs/tutorial-kind-windows.md` (Windows PowerShell guide, not live-tested on Windows). It uses the `standard` StorageClass from Kind's pinned local-path provisioner, disables ingress, and sizes PVCs for local validation. It is not a production overlay.
 
 ### `values/profiles/k3s-ci.yaml`
 
