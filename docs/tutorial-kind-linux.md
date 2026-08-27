@@ -20,6 +20,7 @@ Ensure the following are installed on Linux:
 - Docker running Linux containers;
 - Kind (v0.29.0 validated with node image `kindest/node:v1.33.1`);
 - `kubectl`, `helm` (Helm 3), `git`, `bash`, `curl`, and `openssl`;
+- `python3`, `jq`, and Node.js with `npm` (required by the automated validation scripts in Section 6);
 - at least 12 GiB of memory available to Docker.
 
 Run all commands from the repository root.
@@ -56,13 +57,19 @@ kubectl get storageclass standard -o name || { echo "Kind standard StorageClass 
 > For the recorded validation run on this host, the cluster was created with:
 >
 > ```bash
-> cat <<'EOF' > /tmp/kind-config.yaml
+> cat <<'EOF' > "/tmp/${CLUSTER}-kind-config.yaml"
 > kind: Cluster
 > apiVersion: kind.x-k8s.io/v1alpha4
-> featureGates:
->   KubeletInUserNamespace: true
+> kubeadmConfigPatches:
+>   - |
+>     kind: InitConfiguration
+>     nodeRegistration:
+>       kubeletExtraArgs:
+>         feature-gates: KubeletInUserNamespace=true
+> nodes:
+>   - role: control-plane
 > EOF
-> kind create cluster --name "${CLUSTER}" --image kindest/node:v1.33.1 --config /tmp/kind-config.yaml --wait 5m --kubeconfig "${KUBECONFIG}"
+> kind create cluster --name "${CLUSTER}" --image kindest/node:v1.33.1 --config "/tmp/${CLUSTER}-kind-config.yaml" --wait 5m --kubeconfig "${KUBECONFIG}"
 > ```
 
 `values/profiles/kind-local.yaml` uses the `standard` StorageClass. Do not
@@ -174,8 +181,11 @@ export OP_APIKEY="$(kubectl -n "${NAMESPACE}" get secret ontoportal-secrets -o j
 # Functional application smoke
 SMOKE_REQUIRE_ONTOLOGY=true scripts/app-smoke.sh "${NAMESPACE}" "${RELEASE}"
 
-# UI Playwright tests (optional; install prerequisites if not already present on a fresh checkout)
-# Prerequisite: npm install && npx playwright install chromium
+# UI Playwright tests (optional)
+# One-time fresh checkout setup (skip if npm packages and Chromium browser binary are already installed):
+npm install
+npx playwright install chromium
+
 SMOKE_REQUIRE_ONTOLOGY=true scripts/ui-e2e.sh "${NAMESPACE}" "${RELEASE}"
 
 unset OP_APIKEY
@@ -187,5 +197,5 @@ Delete the named disposable cluster and temporary kubeconfig:
 
 ```bash
 kind delete cluster --name "${CLUSTER}" --kubeconfig "${KUBECONFIG}"
-rm -f "${KUBECONFIG}" /tmp/ontoportal-kind-smoke.env
+rm -f "${KUBECONFIG}" "/tmp/${CLUSTER}-kind-config.yaml" /tmp/ontoportal-kind-smoke.env
 ```
