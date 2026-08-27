@@ -50,6 +50,21 @@ kubectl get storageclass
 kubectl get storageclass standard -o name || { echo "Kind standard StorageClass is missing" >&2; exit 1; }
 ```
 
+> **Troubleshooting host `/dev/kmsg` restrictions**: If your Linux host restricts
+> `/dev/kmsg` (e.g. rootless or containerized Docker environments where kubelet fails
+> during node startup), create the cluster with the `KubeletInUserNamespace` feature gate.
+> For the recorded validation run on this host, the cluster was created with:
+>
+> ```bash
+> cat <<'EOF' > /tmp/kind-config.yaml
+> kind: Cluster
+> apiVersion: kind.x-k8s.io/v1alpha4
+> featureGates:
+>   KubeletInUserNamespace: true
+> EOF
+> kind create cluster --name "${CLUSTER}" --image kindest/node:v1.33.1 --config /tmp/kind-config.yaml --wait 5m --kubeconfig "${KUBECONFIG}"
+> ```
+
 `values/profiles/kind-local.yaml` uses the `standard` StorageClass. Do not
 substitute the k3s `local-path` profile. Because Kind runs without an ingress
 controller here, ingress is disabled and port-forwards provide access.
@@ -103,7 +118,7 @@ done
 > pins `VIRT_HTTPServer_ServerPort=8890` so Virtuoso recovers cleanly on its
 > expected port. All 12 clean-profile deployments reach `1/1` ready.
 
-## 5. Port-forward in two separate terminals
+## 5. Port-forward for manual exploration
 
 In **Terminal 2**, set the isolated kubeconfig and forward the API:
 
@@ -123,9 +138,7 @@ Local endpoints:
 - UI: `http://127.0.0.1:13000`
 - API: `http://127.0.0.1:19393`
 
-## 6. Smoke, import, application, and UI test scripts
-
-In **Terminal 1** (where `${API_KEY}` and `${KUBECONFIG}` are defined):
+In **Terminal 1** (where `${API_KEY}` and `${KUBECONFIG}` are defined), verify basic reachability:
 
 ```bash
 export API="http://127.0.0.1:19393"
@@ -134,20 +147,37 @@ export UI="http://127.0.0.1:13000"
 # Basic reachability checks
 curl -fsS "${UI}/login" > /dev/null && echo "UI /login OK"
 curl -fsS -H "Authorization: apikey token=${API_KEY}" "${API}/users/admin/ontologies" && echo "API admin ontologies OK"
+```
 
+**Stop manual port-forwards before running automated tests**: Press `Ctrl+C` in
+Terminal 2 and Terminal 3 to stop both manual port-forwards. The automated
+scripts in Section 6 establish their own port-forwards on 19393 and 13000 and
+will fail if those ports remain occupied.
+
+## 6. Smoke, import, application, and UI test scripts
+
+Ensure the manual port-forwards from Section 5 are stopped (`Ctrl+C` in Terminals 2 and 3).
+
+In **Terminal 1** (where `${NAMESPACE}`, `${RELEASE}`, `${API_KEY}`, and `${KUBECONFIG}` are defined):
+
+```bash
 # Deep infrastructure smoke check
-SMOKE_DEEP=true FAIL_ON_RESTARTS=false scripts/smoke.sh "${RELEASE}" "${NAMESPACE}"
+SMOKE_DEEP=true FAIL_ON_RESTARTS=false scripts/smoke.sh "${NAMESPACE}" "${RELEASE}"
 
 # Import and index a smoke test ontology
 IMPORT_SMOKE_LOG_DIR=/tmp/ontoportal-kind-import-logs \
-  scripts/import-smoke-ontology.sh --env-file /tmp/ontoportal-kind-smoke.env "${RELEASE}" "${NAMESPACE}"
+  scripts/import-smoke-ontology.sh --env-file /tmp/ontoportal-kind-smoke.env "${NAMESPACE}" "${RELEASE}"
 
 set -a; . /tmp/ontoportal-kind-smoke.env; set +a
 export OP_APIKEY="$(kubectl -n "${NAMESPACE}" get secret ontoportal-secrets -o jsonpath='{.data.apiKey}' | base64 --decode)"
 
-# Functional application smoke and UI Playwright tests
-SMOKE_REQUIRE_ONTOLOGY=true scripts/app-smoke.sh "${RELEASE}" "${NAMESPACE}"
-SMOKE_REQUIRE_ONTOLOGY=true scripts/ui-e2e.sh "${RELEASE}" "${NAMESPACE}"
+# Functional application smoke
+SMOKE_REQUIRE_ONTOLOGY=true scripts/app-smoke.sh "${NAMESPACE}" "${RELEASE}"
+
+# UI Playwright tests (optional; install prerequisites if not already present on a fresh checkout)
+# Prerequisite: npm install && npx playwright install chromium
+SMOKE_REQUIRE_ONTOLOGY=true scripts/ui-e2e.sh "${NAMESPACE}" "${RELEASE}"
+
 unset OP_APIKEY
 ```
 

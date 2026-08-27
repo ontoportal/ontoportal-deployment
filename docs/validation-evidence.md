@@ -6,13 +6,18 @@ This file records what has actually been tested for this repository and what sti
 
 The primary Kind path in `docs/tutorial-kind-linux.md` was executed and
 validated on this Linux Docker host with the clean chart/profile configuration.
-The host needed a Kind kubelet feature-gate patch for its `/dev/kmsg` restriction;
-that host-only workaround is not part of the standard Linux sequence.
+Because this host restricts `/dev/kmsg`, the cluster was created using a host-specific
+Kind config enabling `KubeletInUserNamespace=true` (`/tmp/ontoportal-kind-20260827102747/kind-config.yaml`)
+rather than the unpatched `kind create cluster` CLI invocation. The standard
+portable command is documented as primary in `docs/tutorial-kind-linux.md`, with
+the feature gate noted as a troubleshooting step for restricted hosts.
 The Windows PowerShell guide in `docs/tutorial-kind-windows.md` is derived from
 this tested run and was reviewed, but was NOT executed or live-tested on Windows.
 
 - Kind `v0.29.0`, node image `kindest/node:v1.33.1`, and an isolated kubeconfig
   were used for the unique cluster `ontoportal-kind-20260827102747`.
+- The cluster was initialized with `/tmp/ontoportal-kind-20260827102747/kind-config.yaml`
+  to set `KubeletInUserNamespace=true` due to host `/dev/kmsg` restrictions.
 - Kind's pinned local-path manifest at
   `/kind/manifests/default-storage.yaml` was applied before Helm. The `standard`
   StorageClass was present and all six chart PVCs bound to it; no external
