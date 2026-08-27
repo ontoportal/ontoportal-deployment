@@ -2,6 +2,37 @@
 
 This file records what has actually been tested for this repository and what still requires a live cluster or additional tooling.
 
+## Disposable Kind validation (2026-08-27)
+
+The canonical Windows/Kind path in `docs/tutorial-kind-windows.md` was rehearsed
+on this Linux Docker host with the same clean chart/profile command. The host
+needed a Kind kubelet feature-gate patch for its `/dev/kmsg` restriction; that
+host-only workaround is not part of the Windows sequence.
+
+- Kind `v0.29.0`, node image `kindest/node:v1.33.1`, and an isolated kubeconfig
+  were used for the unique cluster `ontoportal-kind-20260827102747`.
+- Kind's pinned local-path manifest at
+  `/kind/manifests/default-storage.yaml` was applied before Helm. The `standard`
+  StorageClass was present and all six chart PVCs bound to it; no external
+  provisioner or ingress controller was installed.
+- The first Helm wait encountered transient Docker/containerd resource pressure;
+  Virtuoso initialized its persisted HTTP port as `27015` before exiting. The
+  store deployment was restarted once, then the chart was upgraded with
+  `VIRT_HTTPServer_ServerPort=8890`. Helm revision 2 deployed successfully and
+  the store log reported `HTTP/WebDAV server online at 8890`.
+- All 12 clean-profile deployments reached `1/1` ready. The deep Bash smoke
+  passed API/UI, Solr, Redis, Virtuoso, and mgrep checks. The authenticated
+  `GET /users/admin/ontologies` returned HTTP 200 and a JSON array (`[]`).
+- `scripts/import-smoke-ontology.sh` created/uploaded/processed `SMOKETEST`;
+  `scripts/app-smoke.sh` passed ontology visibility, search, annotator, and RDF
+  insert/read/delete; `scripts/ui-e2e.sh` passed all 8 tests.
+- Manual application checks passed mapping CRUD (POST 201, GET 200, PATCH 204,
+  DELETE 204, post-delete GET 404) and both ontology/submission downloads (HTTP
+  200 with non-empty 360-byte files).
+- Bash helpers were run only on Linux. The tutorial documents the equivalent
+  PowerShell requests and explicitly does not claim that the Bash wrappers run
+  natively in PowerShell.
+
 ## Integration and validation evidence (2026-06-21)
 
 - Integrated from a local development archive into this repository.
@@ -196,7 +227,7 @@ Live-test fixes made from observed failures:
 - UI startup prepares the Rails database, stores logs/assets/cache on the shared PVC, and binds Puma to TCP instead of the image's Unix-socket config.
 - MySQL defaults to `bioportal_ui_production`, matching the Rails production database name.
 - Cron creates both `log` and `logs` paths on shared storage.
-- The clean OntoPortal profile pins `bioportal/ncbo_cron:v6.7.1`; `bioportal/ncbo_cron:latest` pulled a newer Goo/SolrCloud path that rejected the standalone Solr setup with `Solr instance is not running in SolrCloud mode`.
+- The current clean OntoPortal profile uses `agroportal/ontologies_api:master` for both API and cron; the older `bioportal/ncbo_cron` SolrCloud compatibility note does not describe this branch.
 
 ## Not yet live-tested
 
@@ -205,7 +236,7 @@ These still require native k3s, production credentials, or additional tooling:
 - native k3s install on a laptop or server following the tutorial end to end;
 - MatPortal private/runtime image rehearsal with credentials, including `ghcr.io/matportal/bioportal_web_ui:master` and the real FAIRness image;
 - Helm rollback and uninstall/reinstall while preserving PVCs;
-- ontology import, search result quality, annotator requests, RDF writes, admin credential login, and admin flows beyond the infrastructure-level smoke test;
+- native-k3s/production ontology import, search quality, annotator, RDF, admin, and mapping/download rehearsals beyond this disposable Kind run;
 - ingress/TLS with Traefik/cert-manager;
 - Prometheus ServiceMonitor behavior after CRD installation;
 - HA failover, node drain, PDB/HPA behavior, and RWX storage behavior;

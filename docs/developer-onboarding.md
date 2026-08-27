@@ -10,6 +10,8 @@ Take this scaffold from a generated deployment baseline to a tested deployment r
 
 Do not fork the deployment logic into separate hand-maintained Kubernetes and Compose implementations. Kubernetes Helm values are the source of truth; Compose must stay generated.
 
+For Windows Docker Desktop validation, follow `docs/tutorial-kind-windows.md` exactly. Its `kind-local` overlay and PowerShell checks are the canonical Kind path; the Bash helpers are for Linux, WSL, or Git Bash and are not claimed to run natively in PowerShell.
+
 ## Ground rules for development
 
 - If you change templates, values, Terraform, scripts, images, startup commands, secrets, ports, volumes, probes, or add-on behavior, update the relevant docs in the same commit or pull request.
@@ -152,7 +154,7 @@ The platform stack should be tested in this order:
 ## Known areas likely to need fixes
 
 - Image entrypoints may differ between upstream OntoPortal, AgroPortal, and MatPortal images. A k3s clean-profile smoke test fixed the current API, UI, and cron startup paths, but AgroPortal and MatPortal image paths still need live confirmation.
-- The clean profile pins `bioportal/ncbo_cron:v6.7.1` because `bioportal/ncbo_cron:latest` expected SolrCloud and crash-looped against the chart's standalone Solr cores during k3s testing.
+- The clean profile uses `agroportal/ontologies_api:master` for both API and cron; keep those matching image/runtime compatibility settings when testing the standalone Solr cores.
 - Solr configsets are currently configurable but not automatically generated inside the chart. Confirm whether production should mount generated configsets, run an init job, or move to SolrCloud for newer upstream cron/runtime images.
 - Virtuoso is the supported bundled RDF store. For production, validate backup/restore and performance, or use an external RDF store.
 - Shared PVC use limits horizontal scaling. Do not enable API/UI HPA or replicas greater than one until shared data is moved to RWX storage or externalized.

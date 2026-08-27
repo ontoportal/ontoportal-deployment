@@ -1,6 +1,6 @@
 # ontoportal Helm chart
 
-This chart is profile-driven. Use it with one main profile and zero or more overlays:
+This chart is profile-driven. Use it with one main profile and zero or more overlays. The short install below is k3s/Traefik-only; for Windows + Kind use `../../docs/tutorial-kind-windows.md` and `values/profiles/kind-local.yaml` instead.
 
 ```bash
 kubectl create namespace ontoportal || true

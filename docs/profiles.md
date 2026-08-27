@@ -4,7 +4,7 @@
 
 ### `values/profiles/ontoportal-clean.yaml`
 
-Use this for a baseline OntoPortal deployment. It intentionally disables MatPortal patches, Matomo, assistant, OntoPanel, and FAIRness by default. The profile pins `bioportal/ncbo_cron:v6.7.1` (since `latest` expected SolrCloud) and `agroportal/ontologies_api:master` (upstream `ontoportal_web_ui` requires the `GET /users/:username/ontologies` route present in the selected AgroPortal API but missing from `bioportal/ontologies_api:latest` and `ontoportal/ontologies_api` master). The deployment also adapts the selected API's SolrCloud-oriented health and collection checks to the chart's standalone split Solr cores.
+Use this for a baseline OntoPortal deployment. It intentionally disables MatPortal patches, Matomo, assistant, OntoPanel, and FAIRness by default. The profile uses `agroportal/ontologies_api:master` for both API and cron: upstream `ontoportal_web_ui` requires the `GET /users/:username/ontologies` route present in the selected AgroPortal API, and the matching cron image keeps the runtime compatible with the chart's standalone split Solr cores.
 
 ### `values/profiles/agroportal-clean.yaml`
 
@@ -18,7 +18,11 @@ MatPortal is not currently a fully public, reproducible distribution from this r
 
 ### `values/profiles/k3s-local.yaml`
 
-Use this with any main profile on k3s. It assumes the default `local-path` storage class and Traefik ingress class.
+Use this with any main profile on k3s. It assumes the default `local-path` storage class and Traefik ingress class. Do not use it for Kind.
+
+### `values/profiles/kind-local.yaml`
+
+Use this only with the clean profile for the disposable Docker Desktop/Kind path in `docs/tutorial-kind-windows.md`. It uses the `standard` StorageClass from Kind's pinned local-path provisioner, disables ingress, and sizes PVCs for local validation. It is not a production overlay.
 
 ### `values/profiles/k3s-ci.yaml`
 

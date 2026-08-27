@@ -162,6 +162,13 @@ def validate_runtime_solr_compatibility() -> None:
         raise SystemExit("Cache invalidation must pass graph object directly")
 
 
+def validate_virtuoso_port() -> None:
+    store_tpl = (ROOT / "chart" / "ontoportal" / "templates" / "store.yaml").read_text(encoding="utf-8")
+    expected = '            - name: VIRT_HTTPServer_ServerPort\n              value: "8890"'
+    if expected not in store_tpl:
+        raise SystemExit("Virtuoso HTTP server port must be pinned to the Service port 8890")
+
+
 def validate_solr_and_cron_fallbacks() -> None:
     cron_tpl = (ROOT / "chart" / "ontoportal" / "templates" / "cron.yaml").read_text(encoding="utf-8")
     solr_tpl = (ROOT / "chart" / "ontoportal" / "templates" / "solr.yaml").read_text(encoding="utf-8")
@@ -182,6 +189,7 @@ def main() -> None:
     validate_profiles()
     validate_no_hardcoded_matportal_services()
     validate_runtime_solr_compatibility()
+    validate_virtuoso_port()
     validate_solr_and_cron_fallbacks()
     validate_image_build_configs()
     render_compose_profiles()

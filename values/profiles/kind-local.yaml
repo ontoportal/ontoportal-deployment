@@ -1,0 +1,39 @@
+# Disposable Kind overlay for local Docker/Windows validation.
+# The Windows procedure applies Kind's pinned local-path provisioner manifest
+# first; it provides the `standard` StorageClass. Kind has no ingress controller,
+# so this path uses kubectl port-forward instead.
+
+global:
+  createNamespace: false
+  storageClassName: standard
+  ingressClassName: ""
+
+ingress:
+  enabled: false
+
+api:
+  publicUrl: http://ontoportal-api:9393
+  restUrlPrefix: http://ontoportal-api:9393
+
+ui:
+  uiUrl: http://127.0.0.1:13000
+  publicApiUrl: http://127.0.0.1:19393
+  extraStartupScript: |-
+    UI_CONFIG="config/bioportal_config_${RAILS_ENV:-production}.rb"
+    cp config/bioportal_config_env.rb.sample "${UI_CONFIG}"
+    printf '\n$REST_URL = ENV.fetch(%%q[API_URL])\n' >> "${UI_CONFIG}"
+    printf '$PUBLIC_REST_URL = ENV[%%q[PUBLIC_API_URL]].to_s.empty? ? $REST_URL : ENV[%%q[PUBLIC_API_URL]]\n' >> "${UI_CONFIG}"
+
+persistence:
+  shared:
+    size: 5Gi
+  solr:
+    size: 2Gi
+  store:
+    size: 5Gi
+  mysql:
+    size: 2Gi
+
+monitoring:
+  serviceMonitor:
+    enabled: false

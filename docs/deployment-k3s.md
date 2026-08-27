@@ -1,8 +1,8 @@
 # k3s deployment tutorial
 
-This tutorial targets an existing k3s cluster. If you still need to install k3s on a laptop or single server first, start with `docs/tutorial-k3s-laptop-server.md`.
+This tutorial targets an existing **k3s** cluster. It is not the Windows/Kind path. For Docker Desktop + Kind, use the canonical `docs/tutorial-kind-windows.md` tutorial instead. If you still need to install k3s on a laptop or single server first, start with `docs/tutorial-k3s-laptop-server.md`.
 
-It assumes `kubectl` and `helm` already point at the cluster.
+It assumes `kubectl` and `helm` already point at the k3s cluster.
 
 Verify the target before installing:
 

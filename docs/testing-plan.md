@@ -36,6 +36,7 @@ The watcher writes `/tmp/ontoportal-validation-status.md` by default and exits o
 | Browser UI smoke | deployed UI/API | Playwright checks home, login, keyboard focus, critical assets, and API non-500 response |
 | k3s CI clean | `.github/workflows/k3s-smoke.yml`, `values/profiles/k3s-ci.yaml` | scheduled/manual GitHub Actions job installs clean OntoPortal and runs deep smoke |
 | k3s CI MatPortal | `.github/workflows/matportal-k3s-smoke.yml`, MatPortal profile, `k3s-ci.yaml`, `matportal-k3s-ci.yaml`, Matomo/FAIRness add-ons | manual GitHub Actions job installs MatPortal values with public smoke-compatible runtime images and runs deep smoke including add-on HTTP checks |
+| Disposable Kind clean | `docs/tutorial-kind-windows.md`, `values/profiles/kind-local.yaml` | Docker Desktop/Kind cluster, pinned local-path storage, clean chart rollout, manual port-forwards, and application checks pass |
 | Single-node k3s clean | `docs/tutorial-k3s-laptop-server.md` | clean OntoPortal installs, API/UI roll out, `scripts/smoke.sh` passes; k3s smoke passed, native k3s still pending |
 | Single-node k3s MatPortal | MatPortal profile plus site overlay | MatPortal API/UI roll out, Matomo/FAIRness optional pods behave as expected |
 | Compose clean | generated `docker-compose.ontoportal-clean.yml` | `docker compose config` passes; optional container start works on a dev host |

@@ -1,6 +1,6 @@
 # Single-node k3s tutorial for a laptop or small server
 
-Use this tutorial when you want to run OntoPortal or MatPortal on your own machine with k3s instead of Docker Compose. It is meant for development, demos, small internal pilots, and pre-production rehearsals. For public production, read `docs/high-availability.md`, `docs/backup-restic.md`, and `docs/production-readiness.md` before exposing the service.
+Use this tutorial when you want to run OntoPortal or MatPortal on your own machine with **native k3s** instead of Docker Compose. It does not cover Windows + Docker Desktop/Kind; use `docs/tutorial-kind-windows.md` for that path. This tutorial is meant for development, demos, small internal pilots, and pre-production rehearsals. For public production, read `docs/high-availability.md`, `docs/backup-restic.md`, and `docs/production-readiness.md` before exposing the service.
 
 ## 0. What this tutorial does and does not do
 

@@ -58,6 +58,8 @@ spec:
           env:
             - name: SPARQL_UPDATE
               value: "true"
+            - name: VIRT_HTTPServer_ServerPort
+              value: "8890"
             - name: DBA_PASSWORD
               valueFrom:
                 secretKeyRef:

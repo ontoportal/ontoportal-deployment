@@ -1,5 +1,7 @@
 # Maintenance tutorial
 
+The commands below use the k3s/Traefik profile. For Windows Docker Desktop/Kind, use `docs/tutorial-kind-windows.md` and its `kind-local` overlay instead.
+
 ## Daily status
 
 ```bash

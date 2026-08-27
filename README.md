@@ -17,14 +17,14 @@ This is a deployment project, not a certified production release. See `docs/vali
 - `python3` with `pyyaml` for validation and Compose generation.
 - `node` and `npm` for Playwright UI-test syntax checks and browser smoke tests.
 - `helm` for chart lint/render/install.
-- `kubectl` for live k3s deployment and smoke tests.
+- `kubectl` for live k3s/Kind deployment and smoke tests.
 - Optional: `docker compose` for Compose validation/runs, Restic for backups, and Terraform/OpenTofu for `terraform/`.
 
 ## Repository layout
 
 ```text
 chart/ontoportal/                  Helm chart; shared source of truth
-values/profiles/                   Clean OntoPortal, AgroPortal, MatPortal, k3s, Compose profiles
+values/profiles/                   Clean OntoPortal, AgroPortal, MatPortal, Kind, k3s, Compose profiles
 values/cloud/                      AWS EKS, Azure AKS, and GKE provider overlays plus RWX examples
 values/addons/                     Optional Matomo, FAIR, HPA/KEDA/VPA, monitoring, Trivy, SonarQube values
 values/image-builds/               Optional source-repository image build plans for OntoPortal/BioPortal/AgroPortal
@@ -36,7 +36,7 @@ scripts/                           Deployment, smoke-test, maintenance, Compose/
 scripts/addons/                    Add-on helpers that do not belong in the app chart
 terraform/                         Helm-on-k3s Terraform deployment
 terraform/examples/                tfvars examples for clean and MatPortal profiles
-docs/                              k3s tutorials, HA, backups, maintenance, security, observability, production, and operations docs
+docs/                              Kind/Windows and k3s tutorials, HA, backups, maintenance, security, observability, production, and operations docs
 ```
 
 ## Clone and validate
@@ -64,13 +64,17 @@ The inline `--set secrets.*=...` examples below are for disposable development c
 
 See `chart/ontoportal/README.md` for the secret key contract.
 
-## Recommended k3s tutorial
+## Choose one deployment path
 
-For a laptop or single server, prefer the full tutorial over the short examples below:
+For Windows with Docker Desktop and Kind, use the canonical tutorial:
+
+- `docs/tutorial-kind-windows.md`: one isolated Kind cluster, the `kind-local` overlay, explicit Secret keys, manual UI/API port-forwards, and PowerShell functional checks.
+
+For a laptop or single server running native k3s, prefer the separate tutorial:
 
 - `docs/tutorial-k3s-laptop-server.md`: install k3s, create Secrets, configure local/server hostnames, deploy, smoke test, upgrade, and uninstall.
 
-The short commands below are useful for quick validation, but they intentionally omit explanations and some safety checks.
+The short commands below are k3s-only quick validation examples. Do not combine `k3s-local` or Traefik ingress settings with the Kind tutorial.
 
 ## Fast path: clean OntoPortal on k3s
 
@@ -265,6 +269,8 @@ kubectl api-resources | grep -i '^servicemonitors' || echo 'install Prometheus O
 
 
 ## Production and operations docs
+
+For Windows + Kind, start with `docs/tutorial-kind-windows.md`; the k3s and operations examples below retain their explicit runtime scope.
 
 - `docs/validation-evidence.md`: what has actually been tested and what still needs live cluster validation.
 - `docs/tutorial-k3s-laptop-server.md`: laptop/single-server k3s installation tutorial.
