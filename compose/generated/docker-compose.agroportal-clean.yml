@@ -260,36 +260,44 @@ services:
       \      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
       \      unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
       status\") == 0\n        raise \"Failed to delete Solr collection #{collection_name}:\
-      \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\nend\n\nif defined?(LinkedData)\n\
-      \  LinkedData.config do |config|\n    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n\
-      \    config.goo_host = GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n\
-      \    config.goo_path_query = GOO_PATH_QUERY.to_s\n    config.goo_path_data =\
-      \ GOO_PATH_DATA.to_s\n    config.goo_path_update = GOO_PATH_UPDATE.to_s\n  \
-      \  config.goo_redis_host = REDIS_GOO_CACHE_HOST.to_s\n    config.goo_redis_port\
-      \ = REDIS_PORT.to_i\n    config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n\
-      \    config.http_redis_port = REDIS_PORT.to_i\n    config.ontology_analytics_redis_host\
-      \ = REDIS_PERSISTENT_HOST.to_s\n    config.ontology_analytics_redis_port = REDIS_PORT.to_i\n\
-      \    config.repository_folder = REPOSITORY_FOLDER.to_s\n    config.search_server_url\
-      \ = SOLR_TERM_SEARCH_URL.to_s.sub(%r{/term_search_core1/?\\z}, \"\")\n    config.property_search_server_url\
-      \ = SOLR_PROP_SEARCH_URL.to_s.sub(%r{/prop_search_core1/?\\z}, \"\")\n    config.replace_url_prefix\
-      \ = true\n    config.rest_url_prefix = REST_URL_PREFIX.to_s\n    config.enable_notifications\
-      \ = false\n  end\nend\n\nif defined?(Annotator)\n  Annotator.config do |config|\n\
-      \    config.annotator_redis_host = REDIS_PERSISTENT_HOST.to_s\n    config.annotator_redis_port\
-      \ = REDIS_PORT.to_i\n    config.mgrep_host = MGREP_HOST.to_s\n    config.mgrep_port\
-      \ = MGREP_PORT.to_i\n    config.mgrep_dictionary_file = MGREP_DICT_PATH.to_s\n\
-      \  end\nend\n\nif defined?(NcboCron)\n  NcboCron.config do |config|\n    config.redis_host\
-      \ = REDIS_PERSISTENT_HOST.to_s\n    config.redis_port = REDIS_PORT.to_i\n  \
-      \  config.ontology_report_path = REPORT_PATH\n    config.daemonize = false\n\
-      \    config.search_index_all_url = ENV.fetch(\"SEARCH_INDEX_ALL_URL\", SOLR_TERM_SEARCH_URL)\n\
-      \    config.property_search_index_all_url = ENV.fetch(\"PROPERTY_SEARCH_INDEX_ALL_URL\"\
-      , SOLR_PROP_SEARCH_URL)\n  end\nend\n\nif defined?(LinkedData::OntologiesAPI)\n\
-      \  LinkedData::OntologiesAPI.config do |config|\n    config.http_redis_host\
-      \ = REDIS_HTTP_CACHE_HOST.to_s\n    config.http_redis_port = REDIS_PORT.to_i\n\
-      \    config.ontology_report_path = REPORT_PATH\n    config.enable_req_timeout\
-      \ = false\n    config.enable_throttling = false\n  end\nend\n\nGoo.use_cache\
-      \ = true if defined?(Goo)\nRUBY\ngem install bundler -v 2.3.27 >/dev/null 2>&1\
-      \ || true\nbundle _2.3.27_ check || bundle _2.3.27_ install\nrm -f tmp/pids/*.pid\
-      \ || true\nexec bundle _2.3.27_ exec rackup -o 0.0.0.0 --port 9393"
+      \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\n\n  class SolrConnector\n\
+      \    alias_method :orig_initialize, :initialize rescue nil\n    def initialize(solr_url,\
+      \ collection_name)\n      @solr_url = solr_url\n      @collection_name = collection_name\n\
+      \      @solr = RSolr.connect(url: collection_url)\n\n      wait_time = 0\n \
+      \     max_wait_time = Integer(ENV.fetch(\"SOLR_WAIT_TIMEOUT\", \"120\"))\n \
+      \     until solr_alive? || wait_time >= max_wait_time\n        sleep 1\n   \
+      \     wait_time += 1\n      end\n      raise \"Solr instance not reachable within\
+      \ #{max_wait_time} seconds\" unless solr_alive?\n\n      @custom_schema = false\n\
+      \    end\n  end\nend\n\nif defined?(LinkedData)\n  LinkedData.config do |config|\n\
+      \    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n    config.goo_host =\
+      \ GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n    config.goo_path_query\
+      \ = GOO_PATH_QUERY.to_s\n    config.goo_path_data = GOO_PATH_DATA.to_s\n   \
+      \ config.goo_path_update = GOO_PATH_UPDATE.to_s\n    config.goo_redis_host =\
+      \ REDIS_GOO_CACHE_HOST.to_s\n    config.goo_redis_port = REDIS_PORT.to_i\n \
+      \   config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n    config.http_redis_port\
+      \ = REDIS_PORT.to_i\n    config.ontology_analytics_redis_host = REDIS_PERSISTENT_HOST.to_s\n\
+      \    config.ontology_analytics_redis_port = REDIS_PORT.to_i\n    config.repository_folder\
+      \ = REPOSITORY_FOLDER.to_s\n    config.search_server_url = SOLR_TERM_SEARCH_URL.to_s.sub(%r{/term_search_core1/?\\\
+      z}, \"\")\n    config.property_search_server_url = SOLR_PROP_SEARCH_URL.to_s.sub(%r{/prop_search_core1/?\\\
+      z}, \"\")\n    config.replace_url_prefix = true\n    config.rest_url_prefix\
+      \ = REST_URL_PREFIX.to_s\n    config.enable_notifications = false\n  end\nend\n\
+      \nif defined?(Annotator)\n  Annotator.config do |config|\n    config.annotator_redis_host\
+      \ = REDIS_PERSISTENT_HOST.to_s\n    config.annotator_redis_port = REDIS_PORT.to_i\n\
+      \    config.mgrep_host = MGREP_HOST.to_s\n    config.mgrep_port = MGREP_PORT.to_i\n\
+      \    config.mgrep_dictionary_file = MGREP_DICT_PATH.to_s\n  end\nend\n\nif defined?(NcboCron)\n\
+      \  NcboCron.config do |config|\n    config.redis_host = REDIS_PERSISTENT_HOST.to_s\n\
+      \    config.redis_port = REDIS_PORT.to_i\n    config.ontology_report_path =\
+      \ REPORT_PATH\n    config.daemonize = false\n    config.search_index_all_url\
+      \ = ENV.fetch(\"SEARCH_INDEX_ALL_URL\", SOLR_TERM_SEARCH_URL)\n    config.property_search_index_all_url\
+      \ = ENV.fetch(\"PROPERTY_SEARCH_INDEX_ALL_URL\", SOLR_PROP_SEARCH_URL)\n  end\n\
+      end\n\nif defined?(LinkedData::OntologiesAPI)\n  LinkedData::OntologiesAPI.config\
+      \ do |config|\n    config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n   \
+      \ config.http_redis_port = REDIS_PORT.to_i\n    config.ontology_report_path\
+      \ = REPORT_PATH\n    config.enable_req_timeout = false\n    config.enable_throttling\
+      \ = false\n  end\nend\n\nGoo.use_cache = true if defined?(Goo)\nRUBY\ngem install\
+      \ bundler -v 2.3.27 >/dev/null 2>&1 || true\nbundle _2.3.27_ check || bundle\
+      \ _2.3.27_ install\nrm -f tmp/pids/*.pid || true\nexec bundle _2.3.27_ exec\
+      \ rackup -o 0.0.0.0 --port 9393"
     healthcheck:
       test:
       - CMD-SHELL
@@ -419,37 +427,44 @@ services:
       \      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
       \      unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
       status\") == 0\n        raise \"Failed to delete Solr collection #{collection_name}:\
-      \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\nend\n\nif defined?(LinkedData)\n\
-      \  LinkedData.config do |config|\n    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n\
-      \    config.goo_host = GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n\
-      \    config.goo_path_query = GOO_PATH_QUERY.to_s\n    config.goo_path_data =\
-      \ GOO_PATH_DATA.to_s\n    config.goo_path_update = GOO_PATH_UPDATE.to_s\n  \
-      \  config.goo_redis_host = REDIS_GOO_CACHE_HOST.to_s\n    config.goo_redis_port\
-      \ = REDIS_PORT.to_i\n    config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n\
-      \    config.http_redis_port = REDIS_PORT.to_i\n    config.ontology_analytics_redis_host\
-      \ = REDIS_PERSISTENT_HOST.to_s\n    config.ontology_analytics_redis_port = REDIS_PORT.to_i\n\
-      \    config.repository_folder = REPOSITORY_FOLDER.to_s\n    config.search_server_url\
-      \ = SOLR_TERM_SEARCH_URL.to_s.sub(%r{/term_search_core1/?\\z}, \"\")\n    config.property_search_server_url\
-      \ = SOLR_PROP_SEARCH_URL.to_s.sub(%r{/prop_search_core1/?\\z}, \"\")\n    config.replace_url_prefix\
-      \ = true\n    config.rest_url_prefix = REST_URL_PREFIX.to_s\n    config.enable_notifications\
-      \ = false\n  end\nend\n\nif defined?(Annotator)\n  Annotator.config do |config|\n\
-      \    config.annotator_redis_host = REDIS_PERSISTENT_HOST.to_s\n    config.annotator_redis_port\
-      \ = REDIS_PORT.to_i\n    config.mgrep_host = MGREP_HOST.to_s\n    config.mgrep_port\
-      \ = MGREP_PORT.to_i\n    config.mgrep_dictionary_file = MGREP_DICT_PATH.to_s\n\
-      \  end\nend\n\nif defined?(NcboCron)\n  NcboCron.config do |config|\n    config.redis_host\
-      \ = REDIS_PERSISTENT_HOST.to_s\n    config.redis_port = REDIS_PORT.to_i\n  \
-      \  config.ontology_report_path = REPORT_PATH\n    config.daemonize = false\n\
-      \    config.search_index_all_url = ENV.fetch(\"SEARCH_INDEX_ALL_URL\", SOLR_TERM_SEARCH_URL)\n\
-      \    config.property_search_index_all_url = ENV.fetch(\"PROPERTY_SEARCH_INDEX_ALL_URL\"\
-      , SOLR_PROP_SEARCH_URL)\n  end\nend\n\nif defined?(LinkedData::OntologiesAPI)\n\
-      \  LinkedData::OntologiesAPI.config do |config|\n    config.http_redis_host\
-      \ = REDIS_HTTP_CACHE_HOST.to_s\n    config.http_redis_port = REDIS_PORT.to_i\n\
-      \    config.ontology_report_path = REPORT_PATH\n    config.enable_req_timeout\
-      \ = false\n    config.enable_throttling = false\n  end\nend\n\nGoo.use_cache\
-      \ = true if defined?(Goo)\nRUBY\ncp config/environments/compose.rb config/config.rb\
-      \ 2>/dev/null || true\ngem install bundler -v 2.3.27 >/dev/null 2>&1 || true\n\
-      bundle _2.3.27_ check || bundle _2.3.27_ install\nNCBO_CRON_DIR=\"$$(bundle\
-      \ _2.3.27_ show ncbo_cron 2>/dev/null || true)\"; if [ -n \"$$NCBO_CRON_DIR\"\
+      \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\n\n  class SolrConnector\n\
+      \    alias_method :orig_initialize, :initialize rescue nil\n    def initialize(solr_url,\
+      \ collection_name)\n      @solr_url = solr_url\n      @collection_name = collection_name\n\
+      \      @solr = RSolr.connect(url: collection_url)\n\n      wait_time = 0\n \
+      \     max_wait_time = Integer(ENV.fetch(\"SOLR_WAIT_TIMEOUT\", \"120\"))\n \
+      \     until solr_alive? || wait_time >= max_wait_time\n        sleep 1\n   \
+      \     wait_time += 1\n      end\n      raise \"Solr instance not reachable within\
+      \ #{max_wait_time} seconds\" unless solr_alive?\n\n      @custom_schema = false\n\
+      \    end\n  end\nend\n\nif defined?(LinkedData)\n  LinkedData.config do |config|\n\
+      \    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n    config.goo_host =\
+      \ GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n    config.goo_path_query\
+      \ = GOO_PATH_QUERY.to_s\n    config.goo_path_data = GOO_PATH_DATA.to_s\n   \
+      \ config.goo_path_update = GOO_PATH_UPDATE.to_s\n    config.goo_redis_host =\
+      \ REDIS_GOO_CACHE_HOST.to_s\n    config.goo_redis_port = REDIS_PORT.to_i\n \
+      \   config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n    config.http_redis_port\
+      \ = REDIS_PORT.to_i\n    config.ontology_analytics_redis_host = REDIS_PERSISTENT_HOST.to_s\n\
+      \    config.ontology_analytics_redis_port = REDIS_PORT.to_i\n    config.repository_folder\
+      \ = REPOSITORY_FOLDER.to_s\n    config.search_server_url = SOLR_TERM_SEARCH_URL.to_s.sub(%r{/term_search_core1/?\\\
+      z}, \"\")\n    config.property_search_server_url = SOLR_PROP_SEARCH_URL.to_s.sub(%r{/prop_search_core1/?\\\
+      z}, \"\")\n    config.replace_url_prefix = true\n    config.rest_url_prefix\
+      \ = REST_URL_PREFIX.to_s\n    config.enable_notifications = false\n  end\nend\n\
+      \nif defined?(Annotator)\n  Annotator.config do |config|\n    config.annotator_redis_host\
+      \ = REDIS_PERSISTENT_HOST.to_s\n    config.annotator_redis_port = REDIS_PORT.to_i\n\
+      \    config.mgrep_host = MGREP_HOST.to_s\n    config.mgrep_port = MGREP_PORT.to_i\n\
+      \    config.mgrep_dictionary_file = MGREP_DICT_PATH.to_s\n  end\nend\n\nif defined?(NcboCron)\n\
+      \  NcboCron.config do |config|\n    config.redis_host = REDIS_PERSISTENT_HOST.to_s\n\
+      \    config.redis_port = REDIS_PORT.to_i\n    config.ontology_report_path =\
+      \ REPORT_PATH\n    config.daemonize = false\n    config.search_index_all_url\
+      \ = ENV.fetch(\"SEARCH_INDEX_ALL_URL\", SOLR_TERM_SEARCH_URL)\n    config.property_search_index_all_url\
+      \ = ENV.fetch(\"PROPERTY_SEARCH_INDEX_ALL_URL\", SOLR_PROP_SEARCH_URL)\n  end\n\
+      end\n\nif defined?(LinkedData::OntologiesAPI)\n  LinkedData::OntologiesAPI.config\
+      \ do |config|\n    config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n   \
+      \ config.http_redis_port = REDIS_PORT.to_i\n    config.ontology_report_path\
+      \ = REPORT_PATH\n    config.enable_req_timeout = false\n    config.enable_throttling\
+      \ = false\n  end\nend\n\nGoo.use_cache = true if defined?(Goo)\nRUBY\ncp config/environments/compose.rb\
+      \ config/config.rb 2>/dev/null || true\ngem install bundler -v 2.3.27 >/dev/null\
+      \ 2>&1 || true\nbundle _2.3.27_ check || bundle _2.3.27_ install\nNCBO_CRON_DIR=\"\
+      $$(bundle _2.3.27_ show ncbo_cron 2>/dev/null || true)\"; if [ -n \"$$NCBO_CRON_DIR\"\
       \ ]; then mkdir -p \"$$NCBO_CRON_DIR/config\"; cp config/environments/compose.rb\
       \ \"$$NCBO_CRON_DIR/config/config.rb\"; fi\nANNO_DIR=\"$$(bundle _2.3.27_ show\
       \ ncbo_annotator 2>/dev/null || true)\"; if [ -n \"$$ANNO_DIR\" ] && [ -d \"\

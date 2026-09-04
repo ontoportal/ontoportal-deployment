@@ -4,6 +4,12 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * 0"
+  pull_request:
+    paths:
+      - 'chart/**'
+      - 'values/**'
+      - 'scripts/**'
+      - '.github/workflows/k3s-smoke.yml'
 
 permissions:
   contents: read
@@ -81,6 +87,13 @@ jobs:
           MAX_RESTARTS: "3"
           ROLLOUT_TIMEOUT: "10m"
         run: ./scripts/smoke.sh ontoportal ontoportal
+      - name: Import and index smoke ontology
+        run: |
+          IMPORT_SMOKE_LOG_DIR=/tmp/ontoportal-k3s-import-logs \
+            ./scripts/import-smoke-ontology.sh --env-file /tmp/ontoportal-k3s-smoke.env ontoportal ontoportal
+          set -a; . /tmp/ontoportal-k3s-smoke.env; set +a
+          export OP_APIKEY="$(kubectl -n ontoportal get secret ontoportal-secrets -o jsonpath='{.data.apiKey}' | base64 --decode)"
+          SMOKE_REQUIRE_ONTOLOGY=true ./scripts/app-smoke.sh ontoportal ontoportal
       - name: Run browser UI smoke tests
         run: ./scripts/ui-e2e.sh ontoportal ontoportal
       - name: Upload Playwright artifacts

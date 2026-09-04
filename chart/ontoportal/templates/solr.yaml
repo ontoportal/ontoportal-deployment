@@ -96,11 +96,11 @@ spec:
             - -lc
             - |
               set -euo pipefail
-              mkdir -p /var/solr/data/configsets
+              mkdir -p /var/solr/data/configsets/_default
               if [ -d {{ printf "%s/_default" $root.Values.solr.configsets.mountPath | quote }} ]; then
-                cp -r {{ printf "%s/_default" $root.Values.solr.configsets.mountPath | quote }} /var/solr/data/configsets/_default
+                cp -a {{ printf "%s/_default/." $root.Values.solr.configsets.mountPath | quote }} /var/solr/data/configsets/_default/
               elif [ -d /opt/solr/server/solr/configsets/_default ]; then
-                cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default
+                cp -a /opt/solr/server/solr/configsets/_default/. /var/solr/data/configsets/_default/
               fi
               {{- if $item.core }}
               if [ -d {{ $item.configPath | quote }} ]; then

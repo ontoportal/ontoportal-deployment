@@ -223,6 +223,25 @@ module SOLR
       end
     end
   end
+
+  class SolrConnector
+    alias_method :orig_initialize, :initialize rescue nil
+    def initialize(solr_url, collection_name)
+      @solr_url = solr_url
+      @collection_name = collection_name
+      @solr = RSolr.connect(url: collection_url)
+
+      wait_time = 0
+      max_wait_time = Integer(ENV.fetch("SOLR_WAIT_TIMEOUT", "120"))
+      until solr_alive? || wait_time >= max_wait_time
+        sleep 1
+        wait_time += 1
+      end
+      raise "Solr instance not reachable within #{max_wait_time} seconds" unless solr_alive?
+
+      @custom_schema = false
+    end
+  end
 end
 
 if defined?(LinkedData)

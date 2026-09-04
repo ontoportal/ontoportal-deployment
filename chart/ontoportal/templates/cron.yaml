@@ -133,6 +133,8 @@ spec:
               ln -snf /data/reports /srv/ontoportal/data/reports
               ln -snf /data/mgrep /srv/ontoportal/data/mgrep
               {{- include "ontoportal.runtimeConfigScript" . | nindent 14 }}
+              cp "config/environments/${RACK_ENV:-production}.rb" config/environments/production.rb 2>/dev/null || true
+              cp "config/environments/${RACK_ENV:-production}.rb" config/environments/development.rb 2>/dev/null || true
               cp "config/environments/${RACK_ENV:-production}.rb" config/config.rb 2>/dev/null || true
               {{- with .Values.cron.extraStartupScript }}
 {{ . | nindent 14 }}
@@ -147,6 +149,17 @@ spec:
               if [ -n "${ANNO_DIR}" ] && [ -d "${ANNO_DIR}/lib/Lemmatizer" ]; then
                 ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true
               fi
+              for url in "${SOLR_TERM_SEARCH_URL}" "${SOLR_PROP_SEARCH_URL}"; do
+                solr_base="${url%/term_search_core1}"
+                solr_base="${solr_base%/prop_search_core1}"
+                echo "Waiting for Solr at ${solr_base} to be ready..."
+                for i in $(seq 1 60); do
+                  if curl -fsS "${solr_base}/admin/info/system?wt=json" >/dev/null 2>&1; then
+                    break
+                  fi
+                  sleep 2
+                done
+              done
               bundle exec ruby <<'RUBY' || echo "WARN: could not patch Virtuoso Goo handling" >&2
               def patch_gem(gem_name, relative_path, replacements)
                 path = File.join(Gem::Specification.find_by_name(gem_name).full_gem_path, relative_path)

@@ -156,6 +156,9 @@ spec:
               ln -snf /data/reports /srv/ontoportal/data/reports
               ln -snf /data/mgrep /srv/ontoportal/data/mgrep
               {{ include "ontoportal.runtimeConfigScript" . | nindent 14 }}
+              cp "config/environments/${RACK_ENV:-production}.rb" config/environments/production.rb 2>/dev/null || true
+              cp "config/environments/${RACK_ENV:-production}.rb" config/environments/development.rb 2>/dev/null || true
+              cp "config/environments/${RACK_ENV:-production}.rb" config/config.rb 2>/dev/null || true
               {{- if .Values.patches.matportalApiParentNormalization.enabled }}
               cp /opt/ontoportal/matportal-patches/matportal_parent_normalization.rb {{ .Values.api.appDir }}/matportal_parent_normalization.rb
               API_ENV_FILE="config/environments/${RACK_ENV:-production}.rb"
@@ -172,6 +175,17 @@ spec:
                 ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true
               fi
               rm -f tmp/pids/*.pid || true
+              for url in "${SOLR_TERM_SEARCH_URL}" "${SOLR_PROP_SEARCH_URL}"; do
+                solr_base="${url%/term_search_core1}"
+                solr_base="${solr_base%/prop_search_core1}"
+                echo "Waiting for Solr at ${solr_base} to be ready..."
+                for i in $(seq 1 60); do
+                  if curl -fsS "${solr_base}/admin/info/system?wt=json" >/dev/null 2>&1; then
+                    break
+                  fi
+                  sleep 2
+                done
+              done
               exec {{ .Values.api.startCommand }}
           startupProbe:
             httpGet:

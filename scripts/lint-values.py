@@ -154,8 +154,9 @@ def validate_runtime_solr_compatibility() -> None:
         or "solr_alive?" not in helpers_text
         or "fetch_all_collections" not in helpers_text
         or "create_collection" not in helpers_text
+        or "class SolrConnector" not in helpers_text
     ):
-        raise SystemExit("Runtime config must override SOLR::Administration with CoreAdmin methods")
+        raise SystemExit("Runtime config must override SOLR::Administration and SOLR::SolrConnector")
     if "@cache.invalidate(graph.to_s)" in helpers_text:
         raise SystemExit("Cache invalidation must pass graph object directly, not graph.to_s")
     if "@cache.invalidate(graph)" not in helpers_text:
