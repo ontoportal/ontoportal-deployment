@@ -102,11 +102,11 @@ services:
     - -lc
     - 'set -euo pipefail
 
-      mkdir -p /var/solr/data/configsets
+      mkdir -p /var/solr/data/configsets/_default
 
-      if [ -d /opt/solr-configsets/_default ]; then cp -r /opt/solr-configsets/_default
-      /var/solr/data/configsets/_default; elif [ -d /opt/solr/server/solr/configsets/_default
-      ]; then cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default;
+      if [ -d /opt/solr-configsets/_default ]; then cp -a /opt/solr-configsets/_default/.
+      /var/solr/data/configsets/_default/; elif [ -d /opt/solr/server/solr/configsets/_default
+      ]; then cp -a /opt/solr/server/solr/configsets/_default/. /var/solr/data/configsets/_default/;
       fi
 
       if [ -d /opt/solr-configsets/term_search ]; then exec solr-precreate term_search_core1
@@ -137,11 +137,11 @@ services:
     - -lc
     - 'set -euo pipefail
 
-      mkdir -p /var/solr/data/configsets
+      mkdir -p /var/solr/data/configsets/_default
 
-      if [ -d /opt/solr-configsets/_default ]; then cp -r /opt/solr-configsets/_default
-      /var/solr/data/configsets/_default; elif [ -d /opt/solr/server/solr/configsets/_default
-      ]; then cp -r /opt/solr/server/solr/configsets/_default /var/solr/data/configsets/_default;
+      if [ -d /opt/solr-configsets/_default ]; then cp -a /opt/solr-configsets/_default/.
+      /var/solr/data/configsets/_default/; elif [ -d /opt/solr/server/solr/configsets/_default
+      ]; then cp -a /opt/solr/server/solr/configsets/_default/. /var/solr/data/configsets/_default/;
       fi
 
       if [ -d /opt/solr-configsets/property_search ]; then exec solr-precreate prop_search_core1
@@ -281,14 +281,17 @@ services:
       )\nSOLR_TERM_SEARCH_URL = ENV.fetch(\"SOLR_TERM_SEARCH_URL\", \"http://localhost:8983/solr/term_search_core1\"\
       )\n\nrequire \"net/http\"\nrequire \"json\"\nrequire \"uri\"\n\nmodule SOLR\n\
       \  module Administration\n    def solr_alive?\n      uri = URI(\"#{@solr_url}/admin/info/system?wt=json\"\
-      )\n      res = Net::HTTP.get_response(uri)\n      res.is_a?(Net::HTTPSuccess)\
-      \ && (JSON.parse(res.body).dig(\"responseHeader\", \"status\") == 0 rescue false)\n\
-      \    rescue StandardError\n      false\n    end\n\n    def fetch_all_collections\n\
-      \      uri = URI(\"#{@solr_url}/admin/cores?action=STATUS&wt=json\")\n     \
-      \ res = Net::HTTP.get_response(uri)\n      data = (JSON.parse(res.body) rescue\
-      \ {}) if res.is_a?(Net::HTTPSuccess)\n      if res.is_a?(Net::HTTPSuccess) &&\
-      \ data.dig(\"responseHeader\", \"status\") == 0\n        (data[\"status\"] ||\
-      \ {}).keys\n      else\n        raise \"Failed to fetch Solr collections: #{res&.code}\
+      )\n      req = Net::HTTP::Get.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
+      \ uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == \"https\"\
+      ) { |http| http.request(req) }\n      res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body).dig(\"\
+      responseHeader\", \"status\") == 0 rescue false)\n    rescue StandardError\n\
+      \      false\n    end\n\n    def fetch_all_collections\n      uri = URI(\"#{@solr_url}/admin/cores?action=STATUS&wt=json\"\
+      )\n      req = Net::HTTP::Get.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
+      \ uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == \"https\"\
+      ) { |http| http.request(req) }\n      data = (JSON.parse(res.body) rescue {})\
+      \ if res.is_a?(Net::HTTPSuccess)\n      if res.is_a?(Net::HTTPSuccess) && data.dig(\"\
+      responseHeader\", \"status\") == 0\n        (data[\"status\"] || {}).keys\n\
+      \      else\n        raise \"Failed to fetch Solr collections: #{res&.code}\
       \ #{res&.body}\"\n      end\n    end\n\n    def collection_exists?(collection_name\
       \ = @collection_name)\n      fetch_all_collections.include?(collection_name.to_s)\n\
       \    end\n\n    def create_collection(collection_name = @collection_name, _num_shards\
@@ -297,32 +300,33 @@ services:
       \ name: collection_name.to_s,\n        instanceDir: collection_name.to_s,\n\
       \        configSet: \"_default\",\n        wt: \"json\"\n      )\n      uri\
       \ = URI(\"#{@solr_url}/admin/cores?#{params}\")\n      req = Net::HTTP::Post.new(uri)\n\
-      \      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme ==\
-      \ \"https\") { |http| http.request(req) }\n      data = (JSON.parse(res.body)\
-      \ rescue {}) if res.is_a?(Net::HTTPSuccess)\n      unless res.is_a?(Net::HTTPSuccess)\
-      \ && data.dig(\"responseHeader\", \"status\") == 0\n        raise \"Failed to\
-      \ create Solr collection #{collection_name}: #{res&.code} #{res&.body}\"\n \
-      \     end\n    end\n\n    def delete_collection(collection_name = @collection_name)\n\
-      \      return unless collection_exists?(collection_name)\n\n      params = URI.encode_www_form(\n\
-      \        action: \"UNLOAD\",\n        core: collection_name.to_s,\n        deleteIndex:\
-      \ \"true\",\n        deleteDataDir: \"true\",\n        deleteInstanceDir: \"\
-      true\",\n        wt: \"json\"\n      )\n      uri = URI(\"#{@solr_url}/admin/cores?#{params}\"\
-      )\n      req = Net::HTTP::Post.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
-      \ uri.port, use_ssl: uri.scheme == \"https\") { |http| http.request(req) }\n\
-      \      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
+      \      res = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 5, read_timeout:\
+      \ 10, use_ssl: uri.scheme == \"https\") { |http| http.request(req) }\n     \
+      \ data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n \
+      \     unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
+      status\") == 0\n        raise \"Failed to create Solr collection #{collection_name}:\
+      \ #{res&.code} #{res&.body}\"\n      end\n    end\n\n    def delete_collection(collection_name\
+      \ = @collection_name)\n      return unless collection_exists?(collection_name)\n\
+      \n      params = URI.encode_www_form(\n        action: \"UNLOAD\",\n       \
+      \ core: collection_name.to_s,\n        deleteIndex: \"true\",\n        deleteDataDir:\
+      \ \"true\",\n        deleteInstanceDir: \"true\",\n        wt: \"json\"\n  \
+      \    )\n      uri = URI(\"#{@solr_url}/admin/cores?#{params}\")\n      req =\
+      \ Net::HTTP::Post.new(uri)\n      res = Net::HTTP.start(uri.hostname, uri.port,\
+      \ open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == \"https\") { |http|\
+      \ http.request(req) }\n      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
       \      unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
       status\") == 0\n        raise \"Failed to delete Solr collection #{collection_name}:\
       \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\n\n  class SolrConnector\n\
       \    alias_method :orig_initialize, :initialize rescue nil\n    def initialize(solr_url,\
-      \ collection_name)\n      @solr_url = solr_url\n      @collection_name = collection_name\n\
-      \      @solr = RSolr.connect(url: collection_url)\n\n      wait_time = 0\n \
-      \     max_wait_time = Integer(ENV.fetch(\"SOLR_WAIT_TIMEOUT\", \"120\"))\n \
-      \     until solr_alive? || wait_time >= max_wait_time\n        sleep 1\n   \
-      \     wait_time += 1\n      end\n      raise \"Solr instance not reachable within\
-      \ #{max_wait_time} seconds\" unless solr_alive?\n\n      @custom_schema = false\n\
-      \    end\n  end\nend\n\nif defined?(LinkedData)\n  LinkedData.config do |config|\n\
-      \    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n    config.goo_host =\
-      \ GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n    config.goo_path_query\
+      \ collection_name, *args, **kwargs)\n      @solr_url = solr_url\n      @collection_name\
+      \ = collection_name\n      @solr = RSolr.connect(url: collection_url)\n\n  \
+      \    wait_time = 0\n      max_wait_time = Integer(ENV.fetch(\"SOLR_WAIT_TIMEOUT\"\
+      , \"120\"))\n      until solr_alive? || wait_time >= max_wait_time\n       \
+      \ sleep 1\n        wait_time += 1\n      end\n      raise \"Solr instance not\
+      \ reachable within #{max_wait_time} seconds\" unless solr_alive?\n\n      @custom_schema\
+      \ = false\n    end\n  end\nend\n\nif defined?(LinkedData)\n  LinkedData.config\
+      \ do |config|\n    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n    config.goo_host\
+      \ = GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n    config.goo_path_query\
       \ = GOO_PATH_QUERY.to_s\n    config.goo_path_data = GOO_PATH_DATA.to_s\n   \
       \ config.goo_path_update = GOO_PATH_UPDATE.to_s\n    config.goo_redis_host =\
       \ REDIS_GOO_CACHE_HOST.to_s\n    config.goo_redis_port = REDIS_PORT.to_i\n \
@@ -454,14 +458,17 @@ services:
       )\nSOLR_TERM_SEARCH_URL = ENV.fetch(\"SOLR_TERM_SEARCH_URL\", \"http://localhost:8983/solr/term_search_core1\"\
       )\n\nrequire \"net/http\"\nrequire \"json\"\nrequire \"uri\"\n\nmodule SOLR\n\
       \  module Administration\n    def solr_alive?\n      uri = URI(\"#{@solr_url}/admin/info/system?wt=json\"\
-      )\n      res = Net::HTTP.get_response(uri)\n      res.is_a?(Net::HTTPSuccess)\
-      \ && (JSON.parse(res.body).dig(\"responseHeader\", \"status\") == 0 rescue false)\n\
-      \    rescue StandardError\n      false\n    end\n\n    def fetch_all_collections\n\
-      \      uri = URI(\"#{@solr_url}/admin/cores?action=STATUS&wt=json\")\n     \
-      \ res = Net::HTTP.get_response(uri)\n      data = (JSON.parse(res.body) rescue\
-      \ {}) if res.is_a?(Net::HTTPSuccess)\n      if res.is_a?(Net::HTTPSuccess) &&\
-      \ data.dig(\"responseHeader\", \"status\") == 0\n        (data[\"status\"] ||\
-      \ {}).keys\n      else\n        raise \"Failed to fetch Solr collections: #{res&.code}\
+      )\n      req = Net::HTTP::Get.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
+      \ uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == \"https\"\
+      ) { |http| http.request(req) }\n      res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body).dig(\"\
+      responseHeader\", \"status\") == 0 rescue false)\n    rescue StandardError\n\
+      \      false\n    end\n\n    def fetch_all_collections\n      uri = URI(\"#{@solr_url}/admin/cores?action=STATUS&wt=json\"\
+      )\n      req = Net::HTTP::Get.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
+      \ uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == \"https\"\
+      ) { |http| http.request(req) }\n      data = (JSON.parse(res.body) rescue {})\
+      \ if res.is_a?(Net::HTTPSuccess)\n      if res.is_a?(Net::HTTPSuccess) && data.dig(\"\
+      responseHeader\", \"status\") == 0\n        (data[\"status\"] || {}).keys\n\
+      \      else\n        raise \"Failed to fetch Solr collections: #{res&.code}\
       \ #{res&.body}\"\n      end\n    end\n\n    def collection_exists?(collection_name\
       \ = @collection_name)\n      fetch_all_collections.include?(collection_name.to_s)\n\
       \    end\n\n    def create_collection(collection_name = @collection_name, _num_shards\
@@ -470,32 +477,33 @@ services:
       \ name: collection_name.to_s,\n        instanceDir: collection_name.to_s,\n\
       \        configSet: \"_default\",\n        wt: \"json\"\n      )\n      uri\
       \ = URI(\"#{@solr_url}/admin/cores?#{params}\")\n      req = Net::HTTP::Post.new(uri)\n\
-      \      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme ==\
-      \ \"https\") { |http| http.request(req) }\n      data = (JSON.parse(res.body)\
-      \ rescue {}) if res.is_a?(Net::HTTPSuccess)\n      unless res.is_a?(Net::HTTPSuccess)\
-      \ && data.dig(\"responseHeader\", \"status\") == 0\n        raise \"Failed to\
-      \ create Solr collection #{collection_name}: #{res&.code} #{res&.body}\"\n \
-      \     end\n    end\n\n    def delete_collection(collection_name = @collection_name)\n\
-      \      return unless collection_exists?(collection_name)\n\n      params = URI.encode_www_form(\n\
-      \        action: \"UNLOAD\",\n        core: collection_name.to_s,\n        deleteIndex:\
-      \ \"true\",\n        deleteDataDir: \"true\",\n        deleteInstanceDir: \"\
-      true\",\n        wt: \"json\"\n      )\n      uri = URI(\"#{@solr_url}/admin/cores?#{params}\"\
-      )\n      req = Net::HTTP::Post.new(uri)\n      res = Net::HTTP.start(uri.hostname,\
-      \ uri.port, use_ssl: uri.scheme == \"https\") { |http| http.request(req) }\n\
-      \      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
+      \      res = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 5, read_timeout:\
+      \ 10, use_ssl: uri.scheme == \"https\") { |http| http.request(req) }\n     \
+      \ data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n \
+      \     unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
+      status\") == 0\n        raise \"Failed to create Solr collection #{collection_name}:\
+      \ #{res&.code} #{res&.body}\"\n      end\n    end\n\n    def delete_collection(collection_name\
+      \ = @collection_name)\n      return unless collection_exists?(collection_name)\n\
+      \n      params = URI.encode_www_form(\n        action: \"UNLOAD\",\n       \
+      \ core: collection_name.to_s,\n        deleteIndex: \"true\",\n        deleteDataDir:\
+      \ \"true\",\n        deleteInstanceDir: \"true\",\n        wt: \"json\"\n  \
+      \    )\n      uri = URI(\"#{@solr_url}/admin/cores?#{params}\")\n      req =\
+      \ Net::HTTP::Post.new(uri)\n      res = Net::HTTP.start(uri.hostname, uri.port,\
+      \ open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == \"https\") { |http|\
+      \ http.request(req) }\n      data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)\n\
       \      unless res.is_a?(Net::HTTPSuccess) && data.dig(\"responseHeader\", \"\
       status\") == 0\n        raise \"Failed to delete Solr collection #{collection_name}:\
       \ #{res&.code} #{res&.body}\"\n      end\n    end\n  end\n\n  class SolrConnector\n\
       \    alias_method :orig_initialize, :initialize rescue nil\n    def initialize(solr_url,\
-      \ collection_name)\n      @solr_url = solr_url\n      @collection_name = collection_name\n\
-      \      @solr = RSolr.connect(url: collection_url)\n\n      wait_time = 0\n \
-      \     max_wait_time = Integer(ENV.fetch(\"SOLR_WAIT_TIMEOUT\", \"120\"))\n \
-      \     until solr_alive? || wait_time >= max_wait_time\n        sleep 1\n   \
-      \     wait_time += 1\n      end\n      raise \"Solr instance not reachable within\
-      \ #{max_wait_time} seconds\" unless solr_alive?\n\n      @custom_schema = false\n\
-      \    end\n  end\nend\n\nif defined?(LinkedData)\n  LinkedData.config do |config|\n\
-      \    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n    config.goo_host =\
-      \ GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n    config.goo_path_query\
+      \ collection_name, *args, **kwargs)\n      @solr_url = solr_url\n      @collection_name\
+      \ = collection_name\n      @solr = RSolr.connect(url: collection_url)\n\n  \
+      \    wait_time = 0\n      max_wait_time = Integer(ENV.fetch(\"SOLR_WAIT_TIMEOUT\"\
+      , \"120\"))\n      until solr_alive? || wait_time >= max_wait_time\n       \
+      \ sleep 1\n        wait_time += 1\n      end\n      raise \"Solr instance not\
+      \ reachable within #{max_wait_time} seconds\" unless solr_alive?\n\n      @custom_schema\
+      \ = false\n    end\n  end\nend\n\nif defined?(LinkedData)\n  LinkedData.config\
+      \ do |config|\n    config.goo_backend_name = GOO_BACKEND_NAME.to_s\n    config.goo_host\
+      \ = GOO_HOST.to_s\n    config.goo_port = GOO_PORT.to_i\n    config.goo_path_query\
       \ = GOO_PATH_QUERY.to_s\n    config.goo_path_data = GOO_PATH_DATA.to_s\n   \
       \ config.goo_path_update = GOO_PATH_UPDATE.to_s\n    config.goo_redis_host =\
       \ REDIS_GOO_CACHE_HOST.to_s\n    config.goo_redis_port = REDIS_PORT.to_i\n \

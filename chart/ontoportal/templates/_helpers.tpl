@@ -242,7 +242,8 @@ module SOLR
   module Administration
     def solr_alive?
       uri = URI("#{@solr_url}/admin/info/system?wt=json")
-      res = Net::HTTP.get_response(uri)
+      req = Net::HTTP::Get.new(uri)
+      res = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == "https") { |http| http.request(req) }
       res.is_a?(Net::HTTPSuccess) && (JSON.parse(res.body).dig("responseHeader", "status") == 0 rescue false)
     rescue StandardError
       false
@@ -250,7 +251,8 @@ module SOLR
 
     def fetch_all_collections
       uri = URI("#{@solr_url}/admin/cores?action=STATUS&wt=json")
-      res = Net::HTTP.get_response(uri)
+      req = Net::HTTP::Get.new(uri)
+      res = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == "https") { |http| http.request(req) }
       data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
       if res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
         (data["status"] || {}).keys
@@ -275,7 +277,7 @@ module SOLR
       )
       uri = URI("#{@solr_url}/admin/cores?#{params}")
       req = Net::HTTP::Post.new(uri)
-      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(req) }
+      res = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == "https") { |http| http.request(req) }
       data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
       unless res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
         raise "Failed to create Solr collection #{collection_name}: #{res&.code} #{res&.body}"
@@ -295,7 +297,7 @@ module SOLR
       )
       uri = URI("#{@solr_url}/admin/cores?#{params}")
       req = Net::HTTP::Post.new(uri)
-      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(req) }
+      res = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 5, read_timeout: 10, use_ssl: uri.scheme == "https") { |http| http.request(req) }
       data = (JSON.parse(res.body) rescue {}) if res.is_a?(Net::HTTPSuccess)
       unless res.is_a?(Net::HTTPSuccess) && data.dig("responseHeader", "status") == 0
         raise "Failed to delete Solr collection #{collection_name}: #{res&.code} #{res&.body}"
@@ -305,7 +307,7 @@ module SOLR
 
   class SolrConnector
     alias_method :orig_initialize, :initialize rescue nil
-    def initialize(solr_url, collection_name)
+    def initialize(solr_url, collection_name, *args, **kwargs)
       @solr_url = solr_url
       @collection_name = collection_name
       @solr = RSolr.connect(url: collection_url)

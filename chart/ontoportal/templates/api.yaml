@@ -158,7 +158,6 @@ spec:
               {{ include "ontoportal.runtimeConfigScript" . | nindent 14 }}
               cp "config/environments/${RACK_ENV:-production}.rb" config/environments/production.rb 2>/dev/null || true
               cp "config/environments/${RACK_ENV:-production}.rb" config/environments/development.rb 2>/dev/null || true
-              cp "config/environments/${RACK_ENV:-production}.rb" config/config.rb 2>/dev/null || true
               {{- if .Values.patches.matportalApiParentNormalization.enabled }}
               cp /opt/ontoportal/matportal-patches/matportal_parent_normalization.rb {{ .Values.api.appDir }}/matportal_parent_normalization.rb
               API_ENV_FILE="config/environments/${RACK_ENV:-production}.rb"
@@ -179,12 +178,17 @@ spec:
                 solr_base="${url%/term_search_core1}"
                 solr_base="${solr_base%/prop_search_core1}"
                 echo "Waiting for Solr at ${solr_base} to be ready..."
+                ready=false
                 for i in $(seq 1 60); do
-                  if curl -fsS "${solr_base}/admin/info/system?wt=json" >/dev/null 2>&1; then
+                  if curl -fsS --connect-timeout 5 --max-time 10 "${solr_base}/admin/info/system?wt=json" >/dev/null 2>&1; then
+                    ready=true
                     break
                   fi
                   sleep 2
                 done
+                if [ "${ready}" != "true" ]; then
+                  echo "WARN: Solr at ${solr_base} did not respond ready within 120s; continuing to app startup" >&2
+                fi
               done
               exec {{ .Values.api.startCommand }}
           startupProbe:
