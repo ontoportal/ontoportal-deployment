@@ -65,10 +65,6 @@ mgrep:
   service:
     port: 55556
   containerPort: 55556
-  command: >-
-    mkdir -p /data/mgrep;
-    [ -s /data/mgrep/dictionary.txt ] || printf '0\tDUMMY\n' > /data/mgrep/dictionary.txt;
-    mgrep --port 55556 -f /data/mgrep/dictionary.txt -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt && tail -f /dev/null
 
 patches:
   matportalApiParentNormalization:

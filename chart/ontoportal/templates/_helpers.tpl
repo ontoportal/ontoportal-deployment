@@ -184,7 +184,6 @@ annotations:
 mkdir -p config/environments
 cat > "config/environments/${RACK_ENV:-production}.rb" <<RUBY
 require "active_support/all"
-require "active_support/isolated_execution_state"
 require "sparql/client"
 
 module SparqlClientUpdatePatch

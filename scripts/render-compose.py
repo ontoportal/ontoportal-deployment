@@ -57,12 +57,65 @@ def bash_command(steps: list[str]) -> list[str]:
     return ["bash", "-lc", "\n".join(steps)]
 
 
+def sh_command(steps: list[str]) -> list[str]:
+    return ["sh", "-lc", "\n".join(steps)]
+
+
+def mgrep_default_command(port: int, dictionary_path: str, *, compose: bool = False) -> str:
+    dictionary = shlex.quote(str(dictionary_path))
+    command = "\n".join([
+        "set -eu",
+        'mgrep_bin="$(command -v mgrep || true)"',
+        'if [ -z "$mgrep_bin" ]; then echo "ERROR: mgrep executable is not on PATH" >&2; exit 1; fi',
+        f"dictionary_path={dictionary}",
+        'mkdir -p "$(dirname "$dictionary_path")"',
+        "is_dummy_dictionary() {",
+        '  [ "$(wc -c < "$1")" -eq 8 ] && printf \'0\\tDUMMY\\n\' | cmp -s - "$1"',
+        "}",
+        "copy_baked_dictionary() {",
+        "  for source in /srv/mgrep/dictionary.txt /srv/mgrep/dictionary/dictionary.txt; do",
+        '    if [ -s "$source" ] && ! is_dummy_dictionary "$source"; then',
+        '      cp "$source" "$dictionary_path"',
+        "      return 0",
+        "    fi",
+        "  done",
+        '  echo "ERROR: no usable mgrep dictionary found for $dictionary_path" >&2',
+        "  exit 1",
+        "}",
+        'if [ ! -s "$dictionary_path" ] || is_dummy_dictionary "$dictionary_path"; then',
+        "  copy_baked_dictionary",
+        "fi",
+        "for required in /srv/mgrep/word_divider.txt /srv/mgrep/CaseFolding.txt; do",
+        '  if [ ! -s "$required" ]; then echo "ERROR: required mgrep file is missing: $required" >&2; exit 1; fi',
+        "done",
+        "stop_mgrep() {",
+        "  trap - TERM INT",
+        "  pkill -TERM -x mgrep 2>/dev/null || true",
+        "  exit 143",
+        "}",
+        "trap stop_mgrep TERM INT",
+        f'mgrep --port {int(port)} -f "$dictionary_path" -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt &',
+        "launcher_pid=$!",
+        "attempts=0",
+        "while ! pgrep -x mgrep >/dev/null 2>&1; do",
+        "  attempts=$((attempts + 1))",
+        '  if [ "$attempts" -ge 50 ]; then wait "$launcher_pid" 2>/dev/null || true; echo "ERROR: mgrep daemon did not remain running" >&2; exit 1; fi',
+        "  sleep 0.2",
+        "done",
+        'wait "$launcher_pid" 2>/dev/null || true',
+        "while pgrep -x mgrep >/dev/null 2>&1; do sleep 1; done",
+        'echo "ERROR: mgrep daemon exited" >&2',
+        "exit 1",
+    ])
+    return command.replace("$", "$$") if compose else command
+
+
 def bundle_command(command: str) -> str:
     return command.replace("bundle exec ", "bundle _2.3.27_ exec ", 1)
 
 
 def virtuoso_patch_command() -> str:
-    return r'''bundle _2.3.27_ exec ruby <<'RUBY' || echo "WARN: could not patch Virtuoso Goo handling" >&2
+    return r'''bundle exec ruby <<'RUBY' || echo "WARN: could not patch Virtuoso Goo handling" >&2
 def patch_gem(gem_name, relative_path, replacements)
   path = File.join(Gem::Specification.find_by_name(gem_name).full_gem_path, relative_path)
   source = File.read(path)
@@ -105,7 +158,6 @@ def runtime_config_command() -> str:
     return r'''mkdir -p config/environments
 cat > config/environments/compose.rb <<RUBY
 require "active_support/all"
-require "active_support/isolated_execution_state"
 require "sparql/client"
 
 module SparqlClientUpdatePatch
@@ -511,17 +563,14 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
         command = values["mgrep"].get("command") or ""
         if not command:
             dict_path = values["mgrep"].get("dictionaryPath", "/data/mgrep/dictionary.txt")
-            command = (
-                f"mkdir -p $(dirname {dict_path}); "
-                f"[ -s {dict_path} ] || (cp /srv/mgrep/dictionary/dictionary.txt {dict_path} 2>/dev/null || printf '0\\tDUMMY\\n' > {dict_path}); "
-                f"mgrep --port {mgrep_port} -f {dict_path} -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt && tail -f /dev/null"
-            )
+            command = mgrep_default_command(mgrep_port, str(dict_path), compose=True)
         cfg: Dict[str, Any] = {
             "image": image(values, "mgrep"),
+            "entrypoint": [],
             "restart": "unless-stopped",
             "ports": [f"127.0.0.1:${{MGREP_PORT:-{mgrep_port}}}:{mgrep_port}"],
             "volumes": [f"{data_dir}:/data"],
-            "command": command,
+            "command": sh_command([command]),
         }
         services["mgrep"] = cfg
 
@@ -562,7 +611,6 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
         api_env = {
             "RACK_ENV": values["api"].get("rackEnv", "compose"),
             "RAILS_ENV": values["api"].get("railsEnv", "compose"),
-            "BUNDLE_PATH": "/data/bundle/api",
             "OP_APIKEY": "${ONTOPORTAL_API_KEY:-change-me}",
             "API_KEY": "${ONTOPORTAL_API_KEY:-change-me}",
             "STORE_KB": values["store"].get("kbName", "ontoportal_kb"),
@@ -591,7 +639,7 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
         }
         api_env.update(env_map(values, "api"))
         api_steps = [
-            "mkdir -p /data/repository /data/reports /data/mgrep /data/api/log /data/api/tmp/pids /data/bundle/api /srv/ontoportal/data",
+            "mkdir -p /data/repository /data/reports /data/mgrep /data/api/log /data/api/tmp/pids /srv/ontoportal/data",
             "rm -rf log tmp || true",
             "ln -snf /data/api/log log",
             "ln -snf /data/api/tmp tmp",
@@ -599,10 +647,9 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             "ln -snf /data/reports /srv/ontoportal/data/reports",
             "ln -snf /data/mgrep /srv/ontoportal/data/mgrep",
             runtime_config_command(),
-            "gem install bundler -v 2.3.27 >/dev/null 2>&1 || true",
-            "bundle _2.3.27_ check || bundle _2.3.27_ install",
+            'if ! bundle check; then echo "ERROR: image-bundled API Ruby dependencies are unavailable; refusing runtime dependency installation" >&2; exit 1; fi',
             "rm -f tmp/pids/*.pid || true",
-            "exec " + bundle_command(values["api"].get("startCommand", "bundle exec rackup -o 0.0.0.0 --port 9393")),
+            "exec " + values["api"].get("startCommand", "bundle exec rackup -o 0.0.0.0 --port 9393"),
         ]
         services["api"] = {
             "image": image(values, "api"),
@@ -619,7 +666,6 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
     if service_enabled(values, "cron"):
         cron_env = copy.deepcopy(services.get("api", {}).get("environment", {}))
         cron_env.update({
-            "BUNDLE_PATH": "/data/bundle/cron",
             "ADMIN_USERNAME": values["secrets"].get("admin", {}).get("username", "admin"),
             "ADMIN_EMAIL": values["secrets"].get("admin", {}).get("email", "admin@example.org"),
             "ADMIN_PASSWORD": "${ADMIN_PASSWORD:-change-me}",
@@ -632,7 +678,7 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
         cron_steps = [
             f"if [ -d {shlex.quote(cron_dir)} ]; then cd {shlex.quote(cron_dir)}; elif [ -d /srv/ontoportal/ontologies_api ]; then cd /srv/ontoportal/ontologies_api; elif [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron; fi",
             "git config --global --add safe.directory '*' || true",
-            "mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids /data/bundle/cron /srv/ontoportal/data",
+            "mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids /srv/ontoportal/data",
             "rm -rf log logs tmp /usr/local/hist || true",
             "ln -snf /data/cron/logs log",
             "ln -snf /data/cron/logs logs",
@@ -643,17 +689,16 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             "ln -snf /data/mgrep /srv/ontoportal/data/mgrep",
             runtime_config_command(),
             "cp config/environments/compose.rb config/config.rb 2>/dev/null || true",
-            "gem install bundler -v 2.3.27 >/dev/null 2>&1 || true",
-            "bundle _2.3.27_ check || bundle _2.3.27_ install",
+            'if ! bundle check; then echo "ERROR: image-bundled cron Ruby dependencies are unavailable; refusing runtime dependency installation" >&2; exit 1; fi',
             (
-                'NCBO_CRON_DIR="$$(bundle _2.3.27_ show ncbo_cron 2>/dev/null || true)"; '
+                'NCBO_CRON_DIR="$$(bundle show ncbo_cron 2>/dev/null || true)"; '
                 'if [ -n "$$NCBO_CRON_DIR" ]; then '
                 'mkdir -p "$$NCBO_CRON_DIR/config"; '
                 'cp config/environments/compose.rb "$$NCBO_CRON_DIR/config/config.rb"; '
                 'fi'
             ),
             (
-                'ANNO_DIR="$$(bundle _2.3.27_ show ncbo_annotator 2>/dev/null || true)"; '
+                'ANNO_DIR="$$(bundle show ncbo_annotator 2>/dev/null || true)"; '
                 'if [ -n "$$ANNO_DIR" ] && [ -d "$$ANNO_DIR/lib/Lemmatizer" ]; then '
                 'ln -snf "$$ANNO_DIR/lib/Lemmatizer" lib/Lemmatizer || true; '
                 'fi'
@@ -667,8 +712,8 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
                 'if [ -n "$$NCBO_CRON_DIR" ] && [ -d "$$NCBO_CRON_DIR/rakelib" ]; then '
                 'RAKE_OPTS="--rakelibdir $$NCBO_CRON_DIR/rakelib"; '
                 "fi; "
-                'if bundle _2.3.27_ exec rake $$RAKE_OPTS "user:create[$$ADMIN_USERNAME,$$ADMIN_EMAIL,$$ADMIN_PASSWORD]"; then '
-                'bundle _2.3.27_ exec rake $$RAKE_OPTS "user:adminify[$$ADMIN_USERNAME]" || true; '
+                'if bundle exec rake $$RAKE_OPTS "user:create[$$ADMIN_USERNAME,$$ADMIN_EMAIL,$$ADMIN_PASSWORD]"; then '
+                'bundle exec rake $$RAKE_OPTS "user:adminify[$$ADMIN_USERNAME]" || true; '
                 "touch /data/cron/.admin_seeded; "
                 'else echo "WARN: admin user seed failed or already exists" >&2; fi; fi'
             )
@@ -678,9 +723,9 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
                 "if [ ! -f /data/cron/.starter_ontology_imported ]; then "
                 'NCBO_IMPORT="ncbo_ontology_import"; NCBO_PULL="ncbo_ontology_pull"; NCBO_PROCESS="ncbo_ontology_process"; '
                 'if [ -f bin/ncbo_ontology_import ]; then NCBO_IMPORT="bin/ncbo_ontology_import"; NCBO_PULL="bin/ncbo_ontology_pull"; NCBO_PROCESS="bin/ncbo_ontology_process"; fi; '
-                'if bundle _2.3.27_ exec $$NCBO_IMPORT --from-apikey "$${SOURCE_OP_APIKEY:-$${OP_APIKEY:-}}" -o "$${STARTER_ONTOLOGY}" --from "$${OP_API_URL}" --admin-user "$${ADMIN_USERNAME}" '
-                '&& bundle _2.3.27_ exec $$NCBO_PULL -o "$${STARTER_ONTOLOGY}" '
-                '&& bundle _2.3.27_ exec $$NCBO_PROCESS -o "$${STARTER_ONTOLOGY}"; then '
+                'if bundle exec $$NCBO_IMPORT --from-apikey "$${SOURCE_OP_APIKEY:-$${OP_APIKEY:-}}" -o "$${STARTER_ONTOLOGY}" --from "$${OP_API_URL}" --admin-user "$${ADMIN_USERNAME}" '
+                '&& bundle exec $$NCBO_PULL -o "$${STARTER_ONTOLOGY}" '
+                '&& bundle exec $$NCBO_PROCESS -o "$${STARTER_ONTOLOGY}"; then '
                 "touch /data/cron/.starter_ontology_imported; "
                 f"else echo 'WARN: starter ontology import failed' >&2; {starter_fail}; fi; fi"
             )
@@ -688,11 +733,11 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
         if cron_start == "bundle exec bin/ncbo_cron":
             cron_steps.append(
                 "if [ -f bin/ncbo_cron ]; then "
-                "exec bundle _2.3.27_ exec bin/ncbo_cron; "
-                "else exec bundle _2.3.27_ exec ncbo_cron; fi"
+                "exec bundle exec bin/ncbo_cron; "
+                "else exec bundle exec ncbo_cron; fi"
             )
         else:
-            cron_steps.append("exec " + bundle_command(cron_start))
+            cron_steps.append("exec " + cron_start)
         services["cron"] = {
             "image": image(values, "cron"),
             "restart": "unless-stopped",

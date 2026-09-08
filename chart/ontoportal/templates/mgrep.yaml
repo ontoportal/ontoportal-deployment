@@ -56,20 +56,84 @@ spec:
               {{- if .Values.mgrep.command }}
               {{ .Values.mgrep.command }}
               {{- else }}
-              mkdir -p "$(dirname {{ .Values.mgrep.dictionaryPath | quote }})"
-              if [ ! -s {{ .Values.mgrep.dictionaryPath | quote }} ]; then
-                if [ -f /srv/mgrep/dictionary/dictionary.txt ]; then
-                  cp /srv/mgrep/dictionary/dictionary.txt {{ .Values.mgrep.dictionaryPath | quote }}
-                else
-                  printf '0\tDUMMY\n' > {{ .Values.mgrep.dictionaryPath | quote }}
-                fi
+              set -eu
+              mgrep_bin="$(command -v mgrep || true)"
+              if [ -z "${mgrep_bin}" ]; then
+                echo "ERROR: mgrep executable is not on PATH" >&2
+                exit 1
               fi
-              /usr/local/bin/mgrep --port {{ .Values.mgrep.containerPort }} -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt -f {{ .Values.mgrep.dictionaryPath | quote }} && while true; do sleep 1000; done
+              dictionary_path={{ .Values.mgrep.dictionaryPath | quote }}
+              mkdir -p "$(dirname "${dictionary_path}")"
+              is_dummy_dictionary() {
+                [ "$(wc -c < "$1")" -eq 8 ] && printf '0\tDUMMY\n' | cmp -s - "$1"
+              }
+              copy_baked_dictionary() {
+                for source in /srv/mgrep/dictionary.txt /srv/mgrep/dictionary/dictionary.txt; do
+                  if [ -s "${source}" ] && ! is_dummy_dictionary "${source}"; then
+                    cp "${source}" "${dictionary_path}"
+                    return 0
+                  fi
+                done
+                echo "ERROR: no usable mgrep dictionary found for ${dictionary_path}" >&2
+                exit 1
+              }
+              if [ ! -s "${dictionary_path}" ] || is_dummy_dictionary "${dictionary_path}"; then
+                copy_baked_dictionary
+              fi
+              for required in /srv/mgrep/word_divider.txt /srv/mgrep/CaseFolding.txt; do
+                if [ ! -s "${required}" ]; then
+                  echo "ERROR: required mgrep file is missing: ${required}" >&2
+                  exit 1
+                fi
+              done
+              stop_mgrep() {
+                trap - TERM INT
+                pkill -TERM -x mgrep 2>/dev/null || true
+                exit 143
+              }
+              trap stop_mgrep TERM INT
+              mgrep --port {{ .Values.mgrep.containerPort }} -f "${dictionary_path}" -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt &
+              launcher_pid=$!
+              attempts=0
+              while ! pgrep -x mgrep >/dev/null 2>&1; do
+                attempts=$((attempts + 1))
+                if [ "${attempts}" -ge 50 ]; then
+                  wait "${launcher_pid}" 2>/dev/null || true
+                  echo "ERROR: mgrep daemon did not remain running" >&2
+                  exit 1
+                fi
+                sleep 0.2
+              done
+              wait "${launcher_pid}" 2>/dev/null || true
+              while pgrep -x mgrep >/dev/null 2>&1; do
+                sleep 1
+              done
+              echo "ERROR: mgrep daemon exited" >&2
+              exit 1
               {{- end }}
           {{- with .Values.mgrep.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: mgrep
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: mgrep
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: mgrep
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           volumeMounts:
             - name: shared-data
               mountPath: /data

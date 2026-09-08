@@ -112,14 +112,37 @@ services:
     - ${DATA_DIR:-./data}/virtuoso:/data
   mgrep:
     image: ontoportal/mgrep-ncbo:0.1
+    entrypoint: []
     restart: unless-stopped
     ports:
     - 127.0.0.1:${MGREP_PORT:-55555}:55555
     volumes:
     - ${DATA_DIR:-./data}:/data
-    command: mkdir -p /data/mgrep; [ -s /data/mgrep/dictionary.txt ] || printf '0\tDUMMY\n'
-      > /data/mgrep/dictionary.txt; mgrep --port 55555 -f /data/mgrep/dictionary.txt
-      -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt && tail -f /dev/null
+    command:
+    - sh
+    - -lc
+    - "set -eu\nmgrep_bin=\"$$(command -v mgrep || true)\"\nif [ -z \"$$mgrep_bin\"\
+      \ ]; then echo \"ERROR: mgrep executable is not on PATH\" >&2; exit 1; fi\n\
+      dictionary_path=/data/mgrep/dictionary.txt\nmkdir -p \"$$(dirname \"$$dictionary_path\"\
+      )\"\nis_dummy_dictionary() {\n  [ \"$$(wc -c < \"$$1\")\" -eq 8 ] && printf\
+      \ '0\\tDUMMY\\n' | cmp -s - \"$$1\"\n}\ncopy_baked_dictionary() {\n  for source\
+      \ in /srv/mgrep/dictionary.txt /srv/mgrep/dictionary/dictionary.txt; do\n  \
+      \  if [ -s \"$$source\" ] && ! is_dummy_dictionary \"$$source\"; then\n    \
+      \  cp \"$$source\" \"$$dictionary_path\"\n      return 0\n    fi\n  done\n \
+      \ echo \"ERROR: no usable mgrep dictionary found for $$dictionary_path\" >&2\n\
+      \  exit 1\n}\nif [ ! -s \"$$dictionary_path\" ] || is_dummy_dictionary \"$$dictionary_path\"\
+      ; then\n  copy_baked_dictionary\nfi\nfor required in /srv/mgrep/word_divider.txt\
+      \ /srv/mgrep/CaseFolding.txt; do\n  if [ ! -s \"$$required\" ]; then echo \"\
+      ERROR: required mgrep file is missing: $$required\" >&2; exit 1; fi\ndone\n\
+      stop_mgrep() {\n  trap - TERM INT\n  pkill -TERM -x mgrep 2>/dev/null || true\n\
+      \  exit 143\n}\ntrap stop_mgrep TERM INT\nmgrep --port 55555 -f \"$$dictionary_path\"\
+      \ -w /srv/mgrep/word_divider.txt -c /srv/mgrep/CaseFolding.txt &\nlauncher_pid=$$!\n\
+      attempts=0\nwhile ! pgrep -x mgrep >/dev/null 2>&1; do\n  attempts=$$((attempts\
+      \ + 1))\n  if [ \"$$attempts\" -ge 50 ]; then wait \"$$launcher_pid\" 2>/dev/null\
+      \ || true; echo \"ERROR: mgrep daemon did not remain running\" >&2; exit 1;\
+      \ fi\n  sleep 0.2\ndone\nwait \"$$launcher_pid\" 2>/dev/null || true\nwhile\
+      \ pgrep -x mgrep >/dev/null 2>&1; do sleep 1; done\necho \"ERROR: mgrep daemon\
+      \ exited\" >&2\nexit 1"
   mysql:
     image: mysql:8.0
     restart: unless-stopped
@@ -161,7 +184,6 @@ services:
     environment:
       RACK_ENV: compose
       RAILS_ENV: compose
-      BUNDLE_PATH: /data/bundle/api
       OP_APIKEY: ${ONTOPORTAL_API_KEY:-change-me}
       API_KEY: ${ONTOPORTAL_API_KEY:-change-me}
       STORE_KB: ontologies_api
@@ -194,15 +216,14 @@ services:
     - bash
     - -lc
     - "mkdir -p /data/repository /data/reports /data/mgrep /data/api/log /data/api/tmp/pids\
-      \ /data/bundle/api /srv/ontoportal/data\nrm -rf log tmp || true\nln -snf /data/api/log\
-      \ log\nln -snf /data/api/tmp tmp\nln -snf /data/repository /srv/ontoportal/data/repository\n\
+      \ /srv/ontoportal/data\nrm -rf log tmp || true\nln -snf /data/api/log log\n\
+      ln -snf /data/api/tmp tmp\nln -snf /data/repository /srv/ontoportal/data/repository\n\
       ln -snf /data/reports /srv/ontoportal/data/reports\nln -snf /data/mgrep /srv/ontoportal/data/mgrep\n\
       mkdir -p config/environments\ncat > config/environments/compose.rb <<RUBY\n\
-      require \"active_support/all\"\nrequire \"active_support/isolated_execution_state\"\
-      \nrequire \"sparql/client\"\n\nmodule SparqlClientUpdatePatch\n  def update(query,\
-      \ **options)\n    @op = :update\n\n    if @cache.redis_cache\n      q_opts =\
-      \ query.respond_to?(:options) ? (query.options || {}) : options\n      bypass\
-      \ = q_opts[:bypass_cache]\n      graph = q_opts[:graph] || q_opts[:graphs]\n\
+      require \"active_support/all\"\nrequire \"sparql/client\"\n\nmodule SparqlClientUpdatePatch\n\
+      \  def update(query, **options)\n    @op = :update\n\n    if @cache.redis_cache\n\
+      \      q_opts = query.respond_to?(:options) ? (query.options || {}) : options\n\
+      \      bypass = q_opts[:bypass_cache]\n      graph = q_opts[:graph] || q_opts[:graphs]\n\
       \      if !bypass && graph\n        @cache.invalidate(graph)\n      end\n  \
       \  end\n\n    @alt_endpoint = options[:endpoint]\n    @logger.log(query, user:\
       \ options[:user], cached: false) do\n      case @url\n      when RDF::Queryable\n\
@@ -296,10 +317,10 @@ services:
       \ do |config|\n    config.http_redis_host = REDIS_HTTP_CACHE_HOST.to_s\n   \
       \ config.http_redis_port = REDIS_PORT.to_i\n    config.ontology_report_path\
       \ = REPORT_PATH\n    config.enable_req_timeout = false\n    config.enable_throttling\
-      \ = false\n  end\nend\n\nGoo.use_cache = true if defined?(Goo)\nRUBY\ngem install\
-      \ bundler -v 2.3.27 >/dev/null 2>&1 || true\nbundle _2.3.27_ check || bundle\
-      \ _2.3.27_ install\nrm -f tmp/pids/*.pid || true\nexec bundle _2.3.27_ exec\
-      \ rackup -o 0.0.0.0 --port 9393"
+      \ = false\n  end\nend\n\nGoo.use_cache = true if defined?(Goo)\nRUBY\nif ! bundle\
+      \ check; then echo \"ERROR: image-bundled API Ruby dependencies are unavailable;\
+      \ refusing runtime dependency installation\" >&2; exit 1; fi\nrm -f tmp/pids/*.pid\
+      \ || true\nexec bundle exec rackup -o 0.0.0.0 --port 9393"
     healthcheck:
       test:
       - CMD-SHELL
@@ -322,7 +343,6 @@ services:
     environment:
       RACK_ENV: compose
       RAILS_ENV: compose
-      BUNDLE_PATH: /data/bundle/cron
       OP_APIKEY: ${ONTOPORTAL_API_KEY:-change-me}
       API_KEY: ${ONTOPORTAL_API_KEY:-change-me}
       STORE_KB: ontologies_api
@@ -363,23 +383,21 @@ services:
       \ elif [ -d /srv/ontoportal/ncbo_cron ]; then cd /srv/ontoportal/ncbo_cron;\
       \ fi\ngit config --global --add safe.directory '*' || true\nmkdir -p /data/repository\
       \ /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids\
-      \ /data/bundle/cron /srv/ontoportal/data\nrm -rf log logs tmp /usr/local/hist\
-      \ || true\nln -snf /data/cron/logs log\nln -snf /data/cron/logs logs\nln -snf\
-      \ /data/cron/tmp tmp\nln -snf /data/history /usr/local/hist\nln -snf /data/repository\
-      \ /srv/ontoportal/data/repository\nln -snf /data/reports /srv/ontoportal/data/reports\n\
-      ln -snf /data/mgrep /srv/ontoportal/data/mgrep\nmkdir -p config/environments\n\
-      cat > config/environments/compose.rb <<RUBY\nrequire \"active_support/all\"\n\
-      require \"active_support/isolated_execution_state\"\nrequire \"sparql/client\"\
-      \n\nmodule SparqlClientUpdatePatch\n  def update(query, **options)\n    @op\
-      \ = :update\n\n    if @cache.redis_cache\n      q_opts = query.respond_to?(:options)\
-      \ ? (query.options || {}) : options\n      bypass = q_opts[:bypass_cache]\n\
-      \      graph = q_opts[:graph] || q_opts[:graphs]\n      if !bypass && graph\n\
-      \        @cache.invalidate(graph)\n      end\n    end\n\n    @alt_endpoint =\
-      \ options[:endpoint]\n    @logger.log(query, user: options[:user], cached: false)\
-      \ do\n      case @url\n      when RDF::Queryable\n        require \"sparql\"\
-      \ unless defined?(::SPARQL::Grammar)\n        SPARQL.execute(query, @url, update:\
-      \ true, optimize: true, **options)\n      else\n        response(query, **options)\n\
-      \      end\n    end\n    self\n  end\nend\nSPARQL::Client.prepend(SparqlClientUpdatePatch)\
+      \ /srv/ontoportal/data\nrm -rf log logs tmp /usr/local/hist || true\nln -snf\
+      \ /data/cron/logs log\nln -snf /data/cron/logs logs\nln -snf /data/cron/tmp\
+      \ tmp\nln -snf /data/history /usr/local/hist\nln -snf /data/repository /srv/ontoportal/data/repository\n\
+      ln -snf /data/reports /srv/ontoportal/data/reports\nln -snf /data/mgrep /srv/ontoportal/data/mgrep\n\
+      mkdir -p config/environments\ncat > config/environments/compose.rb <<RUBY\n\
+      require \"active_support/all\"\nrequire \"sparql/client\"\n\nmodule SparqlClientUpdatePatch\n\
+      \  def update(query, **options)\n    @op = :update\n\n    if @cache.redis_cache\n\
+      \      q_opts = query.respond_to?(:options) ? (query.options || {}) : options\n\
+      \      bypass = q_opts[:bypass_cache]\n      graph = q_opts[:graph] || q_opts[:graphs]\n\
+      \      if !bypass && graph\n        @cache.invalidate(graph)\n      end\n  \
+      \  end\n\n    @alt_endpoint = options[:endpoint]\n    @logger.log(query, user:\
+      \ options[:user], cached: false) do\n      case @url\n      when RDF::Queryable\n\
+      \        require \"sparql\" unless defined?(::SPARQL::Grammar)\n        SPARQL.execute(query,\
+      \ @url, update: true, optimize: true, **options)\n      else\n        response(query,\
+      \ **options)\n      end\n    end\n    self\n  end\nend\nSPARQL::Client.prepend(SparqlClientUpdatePatch)\
       \ unless SPARQL::Client.ancestors.include?(SparqlClientUpdatePatch)\n\nGOO_BACKEND_NAME\
       \ = ENV.fetch(\"GOO_BACKEND_NAME\", \"virtuoso\")\nGOO_HOST = ENV.fetch(\"GOO_HOST\"\
       , \"localhost\")\nGOO_PATH_DATA = ENV.fetch(\"GOO_PATH_DATA\", \"/sparql/\"\
@@ -468,15 +486,15 @@ services:
       \ config.http_redis_port = REDIS_PORT.to_i\n    config.ontology_report_path\
       \ = REPORT_PATH\n    config.enable_req_timeout = false\n    config.enable_throttling\
       \ = false\n  end\nend\n\nGoo.use_cache = true if defined?(Goo)\nRUBY\ncp config/environments/compose.rb\
-      \ config/config.rb 2>/dev/null || true\ngem install bundler -v 2.3.27 >/dev/null\
-      \ 2>&1 || true\nbundle _2.3.27_ check || bundle _2.3.27_ install\nNCBO_CRON_DIR=\"\
-      $$(bundle _2.3.27_ show ncbo_cron 2>/dev/null || true)\"; if [ -n \"$$NCBO_CRON_DIR\"\
-      \ ]; then mkdir -p \"$$NCBO_CRON_DIR/config\"; cp config/environments/compose.rb\
-      \ \"$$NCBO_CRON_DIR/config/config.rb\"; fi\nANNO_DIR=\"$$(bundle _2.3.27_ show\
-      \ ncbo_annotator 2>/dev/null || true)\"; if [ -n \"$$ANNO_DIR\" ] && [ -d \"\
-      $$ANNO_DIR/lib/Lemmatizer\" ]; then ln -snf \"$$ANNO_DIR/lib/Lemmatizer\" lib/Lemmatizer\
-      \ || true; fi\nbundle _2.3.27_ exec ruby <<'RUBY' || echo \"WARN: could not\
-      \ patch Virtuoso Goo handling\" >&2\ndef patch_gem(gem_name, relative_path,\
+      \ config/config.rb 2>/dev/null || true\nif ! bundle check; then echo \"ERROR:\
+      \ image-bundled cron Ruby dependencies are unavailable; refusing runtime dependency\
+      \ installation\" >&2; exit 1; fi\nNCBO_CRON_DIR=\"$$(bundle show ncbo_cron 2>/dev/null\
+      \ || true)\"; if [ -n \"$$NCBO_CRON_DIR\" ]; then mkdir -p \"$$NCBO_CRON_DIR/config\"\
+      ; cp config/environments/compose.rb \"$$NCBO_CRON_DIR/config/config.rb\"; fi\n\
+      ANNO_DIR=\"$$(bundle show ncbo_annotator 2>/dev/null || true)\"; if [ -n \"\
+      $$ANNO_DIR\" ] && [ -d \"$$ANNO_DIR/lib/Lemmatizer\" ]; then ln -snf \"$$ANNO_DIR/lib/Lemmatizer\"\
+      \ lib/Lemmatizer || true; fi\nbundle exec ruby <<'RUBY' || echo \"WARN: could\
+      \ not patch Virtuoso Goo handling\" >&2\ndef patch_gem(gem_name, relative_path,\
       \ replacements)\n  path = File.join(Gem::Specification.find_by_name(gem_name).full_gem_path,\
       \ relative_path)\n  source = File.read(path)\n  patched = replacements.reduce(source)\
       \ { |text, (old, new_text)| text.gsub(old, new_text) }\n  File.write(path, patched)\
@@ -501,13 +519,12 @@ services:
       \  end\nend\nGoo::SPARQL::Client.prepend(GooVirtuosoAppendPatch) unless Goo::SPARQL::Client.ancestors.include?(GooVirtuosoAppendPatch)\n\
       RUBY_PATCH\nRUBY\nif [ ! -f /data/cron/.admin_seeded ]; then RAKE_OPTS=\"\"\
       ; if [ -n \"$$NCBO_CRON_DIR\" ] && [ -d \"$$NCBO_CRON_DIR/rakelib\" ]; then\
-      \ RAKE_OPTS=\"--rakelibdir $$NCBO_CRON_DIR/rakelib\"; fi; if bundle _2.3.27_\
-      \ exec rake $$RAKE_OPTS \"user:create[$$ADMIN_USERNAME,$$ADMIN_EMAIL,$$ADMIN_PASSWORD]\"\
-      ; then bundle _2.3.27_ exec rake $$RAKE_OPTS \"user:adminify[$$ADMIN_USERNAME]\"\
-      \ || true; touch /data/cron/.admin_seeded; else echo \"WARN: admin user seed\
-      \ failed or already exists\" >&2; fi; fi\nif [ -f bin/ncbo_cron ]; then exec\
-      \ bundle _2.3.27_ exec bin/ncbo_cron; else exec bundle _2.3.27_ exec ncbo_cron;\
-      \ fi"
+      \ RAKE_OPTS=\"--rakelibdir $$NCBO_CRON_DIR/rakelib\"; fi; if bundle exec rake\
+      \ $$RAKE_OPTS \"user:create[$$ADMIN_USERNAME,$$ADMIN_EMAIL,$$ADMIN_PASSWORD]\"\
+      ; then bundle exec rake $$RAKE_OPTS \"user:adminify[$$ADMIN_USERNAME]\" || true;\
+      \ touch /data/cron/.admin_seeded; else echo \"WARN: admin user seed failed or\
+      \ already exists\" >&2; fi; fi\nif [ -f bin/ncbo_cron ]; then exec bundle exec\
+      \ bin/ncbo_cron; else exec bundle exec ncbo_cron; fi"
   ui:
     image: ghcr.io/matportal/bioportal_web_ui:master
     restart: unless-stopped

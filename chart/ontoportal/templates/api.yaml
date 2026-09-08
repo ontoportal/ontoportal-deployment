@@ -72,10 +72,6 @@ spec:
               value: "production"
             - name: RAILS_ENV
               value: "production"
-            - name: BUNDLE_PATH
-              value: /data/bundle/api
-            - name: BUNDLE_APP_CONFIG
-              value: {{ printf "%s/.bundle" .Values.api.appDir | quote }}
             - name: COVERAGE
               value: "false"
             - name: OP_APIKEY
@@ -148,7 +144,7 @@ spec:
               set -euo pipefail
               cd {{ .Values.api.appDir | quote }}
               git config --global --add safe.directory '*' || true
-              mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/api/log /data/api/tmp/pids /data/bundle/api /srv/ontoportal/data
+              mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/api/log /data/api/tmp/pids /srv/ontoportal/data
               rm -rf log tmp || true
               ln -snf /data/api/log log
               ln -snf /data/api/tmp tmp
@@ -168,7 +164,10 @@ spec:
               {{- with .Values.api.extraStartupScript }}
 {{ . | nindent 14 }}
               {{- end }}
-              bundle check || bundle install
+              if ! bundle check; then
+                echo "ERROR: image-bundled API Ruby dependencies are unavailable; refusing runtime dependency installation" >&2
+                exit 1
+              fi
               ANNO_DIR=$(bundle show ncbo_annotator 2>/dev/null || true)
               if [ -n "${ANNO_DIR}" ] && [ -d "${ANNO_DIR}/lib/Lemmatizer" ]; then
                 ln -snf "${ANNO_DIR}/lib/Lemmatizer" lib/Lemmatizer || true

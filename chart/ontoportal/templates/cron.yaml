@@ -32,10 +32,6 @@ spec:
           imagePullPolicy: {{ .Values.images.cron.pullPolicy }}
           {{- include "ontoportal.containerSecurityContext" . | nindent 10 }}
           env:
-            - name: BUNDLE_PATH
-              value: /data/bundle/cron
-            - name: BUNDLE_APP_CONFIG
-              value: {{ printf "%s/.bundle" .Values.cron.appDir | quote }}
             - name: OP_APIKEY
               valueFrom:
                 secretKeyRef:
@@ -123,7 +119,7 @@ spec:
                 cd /srv/ontoportal/ncbo_cron
               fi
               git config --global --add safe.directory '*' || true
-              mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids /data/bundle/cron /srv/ontoportal/data
+              mkdir -p /data/repository /data/reports /data/mgrep /data/history /data/cron/logs /data/cron/tmp/pids /srv/ontoportal/data
               rm -rf log logs tmp /usr/local/hist || true
               ln -snf /data/cron/logs log
               ln -snf /data/cron/logs logs
@@ -139,7 +135,10 @@ spec:
               {{- with .Values.cron.extraStartupScript }}
 {{ . | nindent 14 }}
               {{- end }}
-              bundle check || bundle install
+              if ! bundle check; then
+                echo "ERROR: image-bundled cron Ruby dependencies are unavailable; refusing runtime dependency installation" >&2
+                exit 1
+              fi
               NCBO_CRON_DIR=$(bundle show ncbo_cron 2>/dev/null || true)
               if [ -n "${NCBO_CRON_DIR}" ]; then
                 mkdir -p "${NCBO_CRON_DIR}/config"

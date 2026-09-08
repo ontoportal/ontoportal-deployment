@@ -36,6 +36,8 @@ jobs:
         run: make compose-all
       - name: Check generated Compose snapshots are current
         run: git diff --exit-code -- compose/generated
+      - name: Run startup regression (static)
+        run: python3 tests/startup_regression.py
       - name: Validate Compose configuration
         run: make compose-config
       - name: Production readiness warnings
