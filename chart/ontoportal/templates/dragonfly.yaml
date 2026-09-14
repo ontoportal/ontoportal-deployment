@@ -1,0 +1,104 @@
+{{- if .Values.dragonfly.enabled }}
+{{- $root := . -}}
+{{- $ns := include "ontoportal.namespace" . -}}
+{{- $usesPersistentData := .Values.dragonfly.persistent -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ontoportal.fullname" . }}-dragonfly
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/component: "dragonfly"
+    {{- include "ontoportal.labels" . | nindent 4 }}
+  {{- include "ontoportal.annotations" . | nindent 2 }}
+spec:
+  ports:
+    - name: dragonfly
+      port: 6379
+      targetPort: dragonfly
+  selector:
+    app.kubernetes.io/component: "dragonfly"
+    {{- include "ontoportal.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ontoportal.fullname" . }}-dragonfly
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/component: "dragonfly"
+    {{- include "ontoportal.labels" . | nindent 4 }}
+  {{- include "ontoportal.annotations" . | nindent 2 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: "dragonfly"
+      {{- include "ontoportal.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: "dragonfly"
+        {{- include "ontoportal.selectorLabels" . | nindent 8 }}
+      annotations:
+        ontoportal.org/cache-engine: dragonfly
+        ontoportal.org/redis-protocol-compatible: "true"
+    spec:
+      serviceAccountName: {{ include "ontoportal.fullname" . }}
+      {{- include "ontoportal.podSecurityContext" . | nindent 6 }}
+      {{- include "ontoportal.componentScheduling" (list .Values.dragonfly .) | nindent 6 }}
+      containers:
+        - name: dragonfly
+          image: {{ include "ontoportal.image" .Values.images.dragonfly | quote }}
+          imagePullPolicy: {{ .Values.images.dragonfly.pullPolicy }}
+          {{- include "ontoportal.containerSecurityContext" . | nindent 10 }}
+          ports:
+            - name: dragonfly
+              containerPort: 6379
+          args:
+            - "--bind=0.0.0.0"
+            - "--port=6379"
+            {{- if .Values.dragonfly.maxMemory }}
+            - "--maxmemory={{ .Values.dragonfly.maxMemory }}"
+            {{- end }}
+            {{- if $usesPersistentData }}
+            - "--dir=/data"
+            {{- else }}
+            - "--dir=/tmp"
+            {{- end }}
+            {{- if .Values.dragonfly.snapshotCron }}
+            - "--snapshot_cron={{ .Values.dragonfly.snapshotCron }}"
+            {{- end }}
+            {{- if .Values.dragonfly.proactorThreads }}
+            - "--proactor_threads={{ .Values.dragonfly.proactorThreads }}"
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: dragonfly
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: dragonfly
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          {{- with .Values.dragonfly.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $usesPersistentData }}
+          volumeMounts:
+            - name: dragonfly-data
+              mountPath: /data
+          {{- end }}
+      {{- if $usesPersistentData }}
+      volumes:
+        - name: dragonfly-data
+          {{- include "ontoportal.volumeDataSource" (list . .Values.persistence.dragonfly.existingClaim (printf "%s-dragonfly-data" (include "ontoportal.fullname" .))) | nindent 10 }}
+      {{- end }}
+{{- end }}

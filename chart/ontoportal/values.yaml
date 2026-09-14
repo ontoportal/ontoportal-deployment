@@ -69,6 +69,10 @@ images:
     repository: redis
     tag: "7"
     pullPolicy: IfNotPresent
+  dragonfly:
+    repository: docker.dragonflydb.io/dragonflydb/dragonfly
+    tag: v1.19.1
+    pullPolicy: IfNotPresent
   solr:
     repository: solr
     tag: "9.1"
@@ -211,6 +215,11 @@ persistence:
     storageClassName: ""
     accessModes: ["ReadWriteOnce"]
     size: 5Gi
+  dragonfly:
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: ["ReadWriteOnce"]
+    size: 10Gi
   store:
     existingClaim: ""
     storageClassName: ""
@@ -325,6 +334,17 @@ redis:
   # split: separate persistent/goo-cache/http-cache services like upstream docker-compose.
   mode: split
   persistent: true
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+dragonfly:
+  enabled: false
+  persistent: false
+  maxMemory: ""
+  snapshotCron: ""
+  proactorThreads: ""
   resources: {}
   nodeSelector: {}
   tolerations: []
