@@ -553,6 +553,7 @@ services:
       BIOMIXER_URL: ''
       BIOMIXER_PUBLIC_APIKEY: ''
       USE_LEGACY_BIOMIXER: 'false'
+      ONTOPANEL_VISUALIZER_URL: ''
       SPARQL_URL: http://virtuoso:8890/sparql/
       PUBLIC_SPARQL_URL: https://matportal.org/sparql_proxy
       PUBLIC_FAIRNESS_URL: https://matportal.org/fairness-assessment/

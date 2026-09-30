@@ -106,8 +106,8 @@ images:
     tag: latest
     pullPolicy: IfNotPresent
   ontopanel:
-    repository: ghcr.io/matportal/ontopanel
-    tag: latest
+    repository: ghcr.io/matportal/biomixer-visualizer
+    digest: sha256:90939ca6b9b7a9a6409c07a38cb60b12f56be6576f6a9bc033fb65df3ffa61df
     pullPolicy: IfNotPresent
 
 # Optional image source-build plan. Helm itself only consumes images.*. The
@@ -189,7 +189,7 @@ imageBuilds:
       image: ""
       source:
         type: git
-        url: ""
+        url: https://github.com/ontoportal/biomixer-visualizer.git
         ref: main
         context: .
         dockerfile: Dockerfile
@@ -302,6 +302,7 @@ ui:
   biomixerUrl: ""
   biomixerPublicApiKey: ""
   useLegacyBiomixer: "true"
+  ontopanelVisualizerUrl: ""
   publicSparqlUrl: ""
   sessionCookieKey: _session_id
   sessionCookieDomain: ""
@@ -481,6 +482,7 @@ ingress:
     apiRoot: /
     fairness: /fairness-assessment
     assistantStream: /assistant-api/v1/chat/stream
+    ontopanel: /visualizer
 
 
 # Optional production controls. These are intentionally disabled in the baseline so

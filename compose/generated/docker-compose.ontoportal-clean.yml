@@ -613,6 +613,7 @@ services:
       BIOMIXER_URL: ''
       BIOMIXER_PUBLIC_APIKEY: ''
       USE_LEGACY_BIOMIXER: 'true'
+      ONTOPANEL_VISUALIZER_URL: ''
       SPARQL_URL: http://virtuoso:8890/sparql/
       PUBLIC_SPARQL_URL: ''
       PUBLIC_FAIRNESS_URL: ''

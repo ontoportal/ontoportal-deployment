@@ -1,6 +1,6 @@
 {{- if .Values.ingress.enabled }}
-{{- if not (or .Values.ui.enabled .Values.api.enabled .Values.fairness.enabled .Values.assistant.enabled .Values.matomo.enabled) }}
-{{- fail "ingress.enabled=true requires at least one ingress-routed component: ui, api, fairness, assistant, or matomo" }}
+{{- if not (or .Values.ui.enabled .Values.api.enabled .Values.fairness.enabled .Values.assistant.enabled .Values.ontopanel.enabled .Values.matomo.enabled) }}
+{{- fail "ingress.enabled=true requires at least one ingress-routed component: ui, api, fairness, assistant, ontopanel, or matomo" }}
 {{- end }}
 {{- $full := include "ontoportal.fullname" . -}}
 {{- $ns := include "ontoportal.namespace" . -}}
@@ -27,7 +27,7 @@ spec:
   tls:
     - secretName: {{ .Values.ingress.tls.secretName | quote }}
       hosts:
-        {{- if or .Values.ui.enabled (and .Values.api.enabled (not .Values.ingress.hosts.api)) .Values.fairness.enabled .Values.assistant.enabled }}
+        {{- if or .Values.ui.enabled (and .Values.api.enabled (not .Values.ingress.hosts.api)) .Values.fairness.enabled .Values.assistant.enabled .Values.ontopanel.enabled }}
         - {{ .Values.ingress.hosts.ui | quote }}
         {{- end }}
         {{- if and .Values.api.enabled .Values.ingress.hosts.api }}
@@ -38,7 +38,7 @@ spec:
         {{- end }}
   {{- end }}
   rules:
-    {{- if or .Values.ui.enabled (and .Values.api.enabled (not .Values.ingress.hosts.api)) .Values.fairness.enabled .Values.assistant.enabled }}
+    {{- if or .Values.ui.enabled (and .Values.api.enabled (not .Values.ingress.hosts.api)) .Values.fairness.enabled .Values.assistant.enabled .Values.ontopanel.enabled }}
     - host: {{ .Values.ingress.hosts.ui | quote }}
       http:
         paths:
@@ -77,6 +77,15 @@ spec:
                 name: {{ $full }}-assistant
                 port:
                   number: {{ .Values.assistant.service.port }}
+          {{- end }}
+          {{- if .Values.ontopanel.enabled }}
+          - path: {{ .Values.ingress.paths.ontopanel | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $full }}-ontopanel
+                port:
+                  number: {{ .Values.ontopanel.service.port }}
           {{- end }}
     {{- end }}
     {{- if and .Values.api.enabled .Values.ingress.hosts.api }}

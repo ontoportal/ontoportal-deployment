@@ -64,3 +64,15 @@ imageBuilds:
         ref: master
         context: .
         dockerfile: Dockerfile
+    ontopanel:
+      enabled: true
+      image: ghcr.io/ontoportal/biomixer-visualizer
+      publishImages:
+        - docker.io/ontoportal/biomixer-visualizer
+      helmImage: ontopanel
+      source:
+        type: git
+        url: https://github.com/ontoportal/biomixer-visualizer.git
+        ref: main
+        context: .
+        dockerfile: Dockerfile

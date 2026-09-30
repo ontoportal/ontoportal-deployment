@@ -736,6 +736,8 @@ def render(values: Dict[str, Any]) -> Dict[str, Any]:
             "BIOMIXER_URL": values["ui"].get("biomixerUrl", ""),
             "BIOMIXER_PUBLIC_APIKEY": values["ui"].get("biomixerPublicApiKey", ""),
             "USE_LEGACY_BIOMIXER": values["ui"].get("useLegacyBiomixer", "true"),
+            "ONTOPANEL_VISUALIZER_URL": values["ui"].get("ontopanelVisualizerUrl")
+            or (f"http://localhost:${{ONTOPANEL_PORT:-{values['ontopanel']['service']['port']}}}" if service_enabled(values, "ontopanel") else ""),
             "SPARQL_URL": f"http://{store['host']}:{store['port']}{values['store'].get('pathQuery', '/sparql/')}",
             "PUBLIC_SPARQL_URL": values["ui"].get("publicSparqlUrl", ""),
             "PUBLIC_FAIRNESS_URL": values["fairness"].get("publicUrl", ""),

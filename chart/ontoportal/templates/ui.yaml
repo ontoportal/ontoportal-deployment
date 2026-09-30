@@ -114,6 +114,8 @@ spec:
               value: {{ .Values.ui.biomixerPublicApiKey | quote }}
             - name: USE_LEGACY_BIOMIXER
               value: {{ .Values.ui.useLegacyBiomixer | quote }}
+            - name: ONTOPANEL_VISUALIZER_URL
+              value: {{ .Values.ui.ontopanelVisualizerUrl | default (ternary "/visualizer/" "" .Values.ontopanel.enabled) | quote }}
             - name: SPARQL_URL
               value: {{ printf "http://%s:%s%s" (include "ontoportal.storeHost" . | trim) (include "ontoportal.storePort" . | trim) .Values.store.pathQuery | quote }}
             - name: PUBLIC_SPARQL_URL
